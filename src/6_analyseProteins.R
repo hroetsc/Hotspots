@@ -11,13 +11,12 @@ library(dplyr)
 library(stringr)
 library(GOSemSim)
 library(ggplot2)
-library(scales)
 
 
 ### INPUT ###
-prediction = read.csv("results/best_model_prediction.csv", stringsAsFactors = F)
-hp = read.csv("../../files/proteome_human.csv", stringsAsFactors = F)
-props = read.csv("../../RUNS/HumanProteome/PropMatrix_seqs.csv", stringsAsFactors = F)
+prediction = read.csv("results/last_model_prediction.csv", stringsAsFactors = F)
+hp = read.csv("../Seq2Vec/files/proteome_human.csv", stringsAsFactors = F)
+props = read.csv("../Seq2Vec/RUNS/HumanProteome/PropMatrix_seqs.csv", stringsAsFactors = F)
 props$X = NULL
 props = left_join(hp, props)
 
@@ -50,6 +49,17 @@ for (i in 1:nrow(overview)) {
   overview$average_count[i] = cnt$count %>% mean()
   
 }
+write.csv(overview, "results/performance_protein_wise.csv", row.names = F)
+
+q = quantile(overview$PCC, c(0.05, 0.5, 0.95))
+m = overview$PCC %>% mean()
+hist(overview$PCC, freq = F, breaks = 100,
+     main = "histogram of PCCs of all test proteins",
+     xlab = 'PCC')
+abline(v = q[1], col = "red")
+abline(v = q[2], col = "red")
+abline(v = m, col = "blue")
+abline(v = q[3], col = "red")
 
 
 # plot
@@ -57,14 +67,14 @@ pdf(file = "results/performance_protein_wise.pdf", height = 12, width = 24)
 par(mfrow = c(2,3))
 plot(overview$PCC ~ overview$max_count, pch = 20, col = "red", ylim = c(0,6))
 points(overview$PCC ~ overview$min_count, pch = 20, col = "blue")
-plot(overview$PCC ~ overview$average_count, pch = 20, col = "black")
-plot(overview$PCC ~ overview$len_protein, pch = 20, col = "black")
+plot(overview$PCC ~ log10(overview$average_count), pch = 20, col = "black")
+plot(overview$PCC ~ log10(overview$len_protein), pch = 20, col = "black")
 
 
 plot(overview$R_sq ~ overview$max_count, pch = 20, col = "red", ylim = c(0,6))
 points(overview$R_sq ~ overview$min_count, pch = 20, col = "blue")
-plot(overview$R_sq ~ overview$average_count, pch = 20, col = "black")
-plot(overview$R_sq ~ overview$len_protein, pch = 20, col = "black")
+plot(overview$R_sq ~ log10(overview$average_count), pch = 20, col = "black")
+plot(overview$R_sq ~ log10(overview$len_protein), pch = 20, col = "black")
 dev.off()
 
 
@@ -76,7 +86,7 @@ start = min(pred_with_features$count, pred_with_features$pred_count) - 0.1
 stop = max(pred_with_features$count, pred_with_features$pred_count) + 0.1
 
 {
-ggplot(pred_with_features, aes(x = count, y = pred_count, col = len_protein)) +
+ggplot(pred_with_features, aes(x = count, y = pred_count, col = log10(len_protein))) +
   geom_point(alpha = 0.05, size = 0.1) +
   scale_color_gradient(low = 'darkblue', high = 'orangered') +
   xlim(c(start, stop)) +
@@ -154,6 +164,7 @@ ggsave("results/scatterplot_H-bonding.png", plot = last_plot(),
        device = "png", dpi = "retina")
 }
 
+
 ## biological functions
 hsGO = godata('org.Hs.eg.db', keytype = "UNIPROT", ont = "BP", computeIC = F)
 annot = hsGO@geneAnno
@@ -167,10 +178,6 @@ for (i in 1:nrow(overview)) {
 ## characterise outliers
 outliers = prediction[prediction$count > 3 & prediction$pred_count < 2, ]
 outliers$Accession %>% unique()
-
-
-### OUTPUT ###
-
 
 
 

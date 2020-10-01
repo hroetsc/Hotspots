@@ -118,15 +118,16 @@ write.csv(testing.50per.2, "data/windowTokens_testing50-2.csv", row.names = F)
 # get the same training/testing data sets as in df w/o extension
 # to avoid re-calculation of all the windows
 
-training.5per = read.csv("data/windowTokens_training05.csv", stringsAsFactors = F)
-testing.5per = read.csv("data/windowTokens_testing05.csv", stringsAsFactors = F)
+training.50per = read.csv("data/windowTokens_training50.csv", stringsAsFactors = F)
+testing.50per = read.csv("data/windowTokens_testing50.csv", stringsAsFactors = F)
 
-window = read.csv("data/NandCext_windowTokens.csv", stringsAsFactors = F)
+window = read.csv("data/windowTokens_norm.csv", stringsAsFactors = F)
 
 get_same_data = function(df = "", window = ""){
   
   window_sub = window[which(window$Accession %in% df$Accession), ]
   out = window_sub[order(window_sub$window %in% df$window), ]
+  out = out[order(out$Accession %in% window_sub$Accession), ]
   
   if (length(which(out$window != df$window)) > 0) {
     print("ELEMENTS DO NOT MATCH !!!")
@@ -135,9 +136,9 @@ get_same_data = function(df = "", window = ""){
   return(out)
 }
 
-training = get_same_data(df = training.5per, window = window)
-testing = get_same_data(df = testing.5per, window = window)
+training = get_same_data(df = training.50per, window = window)
+testing = get_same_data(df = testing.50per, window = window)
 
-write.csv(training, "data/NandCext_windowTokens_training05.csv", row.names = F)
-write.csv(testing, "data/NandCext_windowTokens_testing05.csv", row.names = F)
+write.csv(training, "data/windowTokens_norm_training50.csv", row.names = F)
+write.csv(testing, "data/windowTokens_norm_testing50.csv", row.names = F)
 

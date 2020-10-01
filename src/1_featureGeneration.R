@@ -15,18 +15,17 @@ library(doParallel)
 library(future)
 registerDoParallel(availableCores())
 
-setwd("Documents/QuantSysBios/ProtTransEmbedding/Hotspots/AAEmbeddings/")
 
 window_size = 25
 ext = 5
 
 
 ### INPUT ###
-load("../HOTSPOTS/accU.RData")
-load("../HOTSPOTS/RESULTS/windowCounts.RData")
+load("HOTSPOTS/accU.RData")
+load("HOTSPOTS/RESULTS/windowCounts.RData")
 
 # human proteome
-prots = read.csv("../../files/proteome_human.csv", stringsAsFactors = F, header = T)
+prots = read.csv("../Seq2Vec/files/proteome_human.csv", stringsAsFactors = F, header = T)
 
 
 ### MAIN PART ###
@@ -108,7 +107,8 @@ get_windows_counts = function(extension = "", outfile = ""){
         
       }
       
-      
+      # normalise by protein length
+      wnd.Tokens$counts = wnd.Tokens$counts / nchar(cnt.Prot$seqs)
       windowTokens[[i]] = wnd.Tokens
     }
     
@@ -150,7 +150,7 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 
 # apply
-get_windows_counts(extension = "none", outfile = "data/windowTokens")
+get_windows_counts(extension = "none", outfile = "data/windowTokens_norm")
 get_windows_counts(extension = "N", outfile = "data/Next_windowTokens")
 get_windows_counts(extension = "C", outfile = "data/Cext_windowTokens")
 get_windows_counts(extension = "NandC", outfile = "data/NandCext_windowTokens")

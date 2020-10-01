@@ -15,16 +15,11 @@ module load cudnn/10.1v7.6.5
 salloc -p gpu -C scratch2 -N 16 -n 16 --tasks-per-node 1 --gpus-per-task=1 --mem-per-gpu=20G -t 02-00:00:00 --job-name='hotspots'
 scontrol show hostnames $SLURM_JOB_NODELIST
 
-srun --mpi=pmix -o hotspots-%J.out python src/5_fitModel_hyperopt.py
-
-cp -rf /scratch2/hroetsc/Hotspots/results/*ResNet* results/hyperopt/
-cp -rf /scratch2/hroetsc/Hotspots/results/best_model_opt_0* results/hyperopt/
-
+srun --mpi=pmix -o hotspots-%J.out python src/5_fitModel.py
+#srun --mpi=pmix -o hotspots-prediction-%J.out python src/5_makePrediction.py
 
 cp -rf /scratch2/hroetsc/Hotspots/results/model_metrics.txt results/
-cp -rf /scratch2/hroetsc/Hotspots/results/last_model_prediction_rank0.csv results/
-cp -rf /scratch2/hroetsc/Hotspots/results/best_model_prediction_rank0.csv results/
-cp -rf /scratch2/hroetsc/Hotspots/results/last_model_prediction.csv results/
-cp -rf /scratch2/hroetsc/Hotspots/results/best_model_prediction.csv results/
+cp -rf /scratch2/hroetsc/Hotspots/results/model/* results/
+cp -rf /scratch2/hroetsc/Hotspots/results/*_prediction_rank*.csv results/
 
 #mpirun --mca mpi_warn_on_fork 0 --output-filename hotspots-%J-%N.out python C_fitModel.py

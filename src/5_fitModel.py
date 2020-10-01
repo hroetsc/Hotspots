@@ -1,10 +1,11 @@
 ### HEADER ###
 # HOTSPOT PREDICTION
-# description: set up neural network to predict hotspot density along the human proteome
+# description: fit neural network to predict hotspot density along the human proteome
 # input: table with amino acids in sliding windows and scores, window matrices
-# output: model, metrics, predictions for test data set
+# output: model, metrics
 # author: HR
 
+import os
 import numpy as np
 import pandas as pd
 
@@ -19,7 +20,7 @@ hvd.init()
 
 from model_helper import print_initialization, open_and_format_matrices, \
     RestoreBestModel, CosineAnnealing, \
-    save_training_res, combine_predictions, ensemble_predictions
+    save_training_res
 
 print_initialization()
 
@@ -37,7 +38,7 @@ print('HYPERPARAMETERS')
 embeddingDim = 20
 windowSize = 25
 
-epochs = 100
+epochs = 200
 pseudocounts = 1
 no_cycles = int(epochs / 10)
 
@@ -58,6 +59,16 @@ print("-------------------------------------------------------------------------
 
 ########## part 1: fit model ##########
 ### INPUT ###
+
+best_model_path = '/scratch2/hroetsc/Hotspots/results/model/best_model_rank{}.h5'.format(hvd.rank())
+last_model_path = '/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank())
+
+if os.path.exists(best_model_path):
+    os.remove(best_model_path)
+
+if os.path.exists(last_model_path):
+    os.remove(last_model_path)
+
 print('#####')
 print('ONE HOT AND AA INDEX ON DIFFERENT RANKS')
 print('no extension')
@@ -65,18 +76,24 @@ print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
 
-tokens, counts, emb, dist = open_and_format_matrices(group='train', encoding=enc, spec='50-2',
+tokens, counts, emb, dist = open_and_format_matrices(group='train', encoding=enc,
+                                                     spec='50',
                                                      extension='',
                                                      windowSize=windowSize, embeddingDim=embeddingDim,
-                                                     relative_dist=False)
+                                                     relative_dist=False,
+                                                     protein_norm=False,
+                                                     log_counts=False)
 tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='test', encoding=enc,
-                                                                         spec='50-2',
+                                                                         spec='50',
                                                                          extension='',
                                                                          windowSize=windowSize,
                                                                          embeddingDim=embeddingDim,
-                                                                         relative_dist=False)
+                                                                         relative_dist=False,
+                                                                         protein_norm=False,
+                                                                         log_counts=False)
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
+
 
 ### MAIN PART ###
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
@@ -126,7 +143,6 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                                       data_format='channels_first')(inp_layer)
 
         out = layers.Add()([inp_layer, y])
-
 
         return out
 
@@ -212,11 +228,10 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                   metrics=['mean_absolute_error', 'mean_absolute_percentage_error', 'accuracy'],
                   experimental_run_tf_function=False)
 
-
     # for reproducibility during optimization
     tf.print('......................................................')
     tf.print('MIXTURE OF RESNET AND SPLICEAI')
-    tf.print('optimizer: Adam (not distributed)')
+    tf.print('optimizer: Adam (distributed)')
     tf.print('loss: mean squared error')
     tf.print('skip-connections between blocks')
     tf.print('channels: first')
@@ -232,7 +247,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 #### train model
 print('MODEL TRAINING')
 # define callbacks
-callbacks = [RestoreBestModel(),
+callbacks = [RestoreBestModel(last_model_path),
              CosineAnnealing(no_cycles=no_cycles, no_epochs=epochs, max_lr=max_lr),
              hvd.callbacks.BroadcastGlobalVariablesCallback(0)]
 
@@ -246,13 +261,13 @@ steps = int(np.ceil(steps / hvd.size()))
 val_steps = int(np.ceil(val_steps / hvd.size()))
 
 ## fit model
-# model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
-#                                 block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
-#                                 include_distance=True)
+model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
+                                block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
+                                include_distance=True)
 
-print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
-model = keras.models.load_model('/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank()))
-initial_epoch = epochs
+# print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
+# model = keras.models.load_model(last_model_path)
+
 
 if hvd.rank() == 0:
     model.summary()
@@ -267,25 +282,34 @@ fit = model.fit(x=[emb, dist],
                 validation_steps=val_steps,
                 epochs=epochs,
                 callbacks=callbacks,
-                initial_epoch=initial_epoch,
+                initial_epoch=0,
                 max_queue_size=64,
                 verbose=2 if hvd.rank() == 0 else 0,
                 shuffle=True)
 
 ### OUTPUT ###
 print('SAVE MODEL AND METRICS')
-save_training_res(model, fit)
+save_training_res(model, fit, last_model_path)
 
 ########## part 2: make prediction ##########
-print('MAKE PREDICTION')
+
+print('LOAD MODELS')
+last_model = keras.models.load_model(last_model_path)
+best_model = keras.models.load_model(best_model_path)
 
 
-# make prediction
 def make_prediction(model, outname):
+    print(outname)
+
+    outpath = '/scratch2/hroetsc/Hotspots/results/{}_prediction_rank{}.csv'.format(outname, hvd.rank())
+    if os.path.exists(outpath):
+        os.remove(outpath)
+
     pred = model.predict(x=[emb_test, dist_test],
                          batch_size=batch_size,
                          verbose=1 if hvd.rank() == 0 else 0,
                          max_queue_size=64)
+
     print('counts:')
     print(counts_test)
     print('prediction:')
@@ -298,19 +322,12 @@ def make_prediction(model, outname):
                                "count": counts_test,
                                "pred_count": pred_counts})
 
-    pd.DataFrame.to_csv(prediction,
-                        '/scratch2/hroetsc/Hotspots/results/{}_prediction_rank{}.csv'.format(outname, hvd.rank()),
-                        index=False)
+    pd.DataFrame.to_csv(prediction, outpath, index=False)
 
 
-make_prediction(model=model, outname='best_model')
-
-last_model = keras.models.load_model('/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank()))
+print('MAKE PREDICTION')
+make_prediction(model=best_model, outname='best_model')
 make_prediction(model=last_model, outname='last_model')
 
-if hvd.rank() == 0:
-    combine_predictions(outname='best_model')
-    combine_predictions(outname='last_model')
-
-
 tf.keras.backend.clear_session()
+

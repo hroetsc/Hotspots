@@ -49,7 +49,7 @@ def print_initialization():
 ########################################################################################################################
 # DATA FORMATTING
 ########################################################################################################################
-def format_input(tokensAndCounts, pseudocounts, relative_dist=False):
+def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_norm=False, log_counts=False):
     tokens = np.array(tokensAndCounts.loc[:, ['Accession', 'window']], dtype='object')
 
     dist_N = np.array(tokensAndCounts['dist_N'], dtype='int32')
@@ -62,19 +62,39 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False):
     dist = np.array([dist_N, dist_C]).transpose()
 
     counts = np.array(tokensAndCounts['counts'], dtype='float32')
-    counts = np.log2((counts + pseudocounts))
+
+
+    if protein_norm:
+        print('normalise counts by protein length')
+        acc = set(tokens[:, 0])
+        acc = [i for i in acc]
+
+        for i in acc:
+            cnt = np.where(tokens[:, 0] == i)[0]
+            counts[cnt] = counts[cnt] / len(cnt)
+
+    if log_counts:
+        counts = np.log2((counts + pseudocounts))
+        print('using log-transformed counts')
+    else:
+        print('using raw counts')
 
     print('number of features: ', counts.shape[0])
     return tokens, counts, dist
 
 
-def open_and_format_matrices(group, encoding, spec, extension, windowSize, embeddingDim, relative_dist, pseudocounts=1):
+def open_and_format_matrices(group, encoding, spec, extension, windowSize, embeddingDim,
+                             relative_dist, protein_norm, log_counts, pseudocounts=1):
     print(group)
     print(encoding)
+    print(spec)
     print(extension)
 
     tokensAndCounts = pd.read_csv(str('/scratch2/hroetsc/Hotspots/data/'+extension+'windowTokens_'+ group + 'ing' + spec + '.csv'))
-    tokens, counts, dist = format_input(tokensAndCounts, pseudocounts, relative_dist=relative_dist)
+    tokens, counts, dist = format_input(tokensAndCounts, pseudocounts,
+                                        relative_dist=relative_dist,
+                                        protein_norm=protein_norm,
+                                        log_counts=log_counts)
 
     emb_path = str('/scratch2/hroetsc/Hotspots/data/EMBEDDING_' + encoding + '_'+group+spec+'.dat')
     acc_path = str('/scratch2/hroetsc/Hotspots/data/ACCESSIONS_' + encoding + '_'+group+spec+'.dat')
@@ -133,8 +153,9 @@ def open_and_format_matrices(group, encoding, spec, extension, windowSize, embed
 ########################################################################################################################
 
 class RestoreBestModel(keras.callbacks.Callback):
-    def __init__(self):
+    def __init__(self, outpath):
         super(RestoreBestModel, self).__init__()
+        self.outpath = outpath
         self.best_weights = None  # best weights
 
     def on_train_begin(self, logs=None):
@@ -147,7 +168,7 @@ class RestoreBestModel(keras.callbacks.Callback):
             self.best_weights = self.model.get_weights()  # record the best weights
 
     def on_train_end(self, logs=None):
-        self.model.save('/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank()))
+        self.model.save(self.outpath)
 
         self.model.set_weights(self.best_weights)
         print('RESTORING WEIGHTS FROM VALIDATION LOSS {}'.format(self.best))
@@ -191,11 +212,11 @@ class CosineAnnealing(keras.callbacks.Callback):
 # SAVE METRICS AND PREDICTION
 ########################################################################################################################
 
-def save_training_res(model, fit):
+def save_training_res(model, fit, outpath):
     print('----- saving training results -----')
 
     # save entire model
-    model.save('/scratch2/hroetsc/Hotspots/results/model/best_model_rank{}.h5'.format(hvd.rank()))
+    model.save(outpath)
 
     if hvd.rank() == 0:
         # save weights
@@ -214,6 +235,11 @@ def save_training_res(model, fit):
 
 def combine_predictions(outname):
     print('----- combining predictions from all ranks -----')
+    print(outname)
+
+    outpath = '/scratch2/hroetsc/Hotspots/results/{}_prediction.csv'.format(outname)
+    if os.path.exists(outpath):
+        os.remove(outpath)
 
     for i in range(hvd.size()):
         cnt_pred = pd.read_csv('/scratch2/hroetsc/Hotspots/results/{}_prediction_rank{}.csv'.format(outname, i))
@@ -225,9 +251,7 @@ def combine_predictions(outname):
         else:
             res['pred_count'] += cnt_pred['pred_count'] * (1 / hvd.size())
 
-    pd.DataFrame.to_csv(res,
-                        '/scratch2/hroetsc/Hotspots/results/{}_prediction.csv'.format(outname),
-                        index=False)
+    pd.DataFrame.to_csv(res, outpath, index=False)
 
 
 def ensemble_predictions(emb_test, dist_test, epochs, no_cycles, batchSize):
@@ -257,3 +281,4 @@ def ensemble_predictions(emb_test, dist_test, epochs, no_cycles, batchSize):
     average_prediction = np.mean(all_predictions, axis=0)
 
     return average_prediction
+
