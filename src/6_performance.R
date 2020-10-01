@@ -12,7 +12,7 @@ library(ggplot2)
 library(tidyr)
 library(zoo)
 
-JOBID = "5365339-11-last"
+JOBID = "5365339-11-last-nolog"
 
 
 ### INPUT ###
@@ -22,25 +22,44 @@ system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/bes
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/last_model_prediction* results/")
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model/* results/model/")
 
-metrics = read.table("results/model_metrics.txt", sep = ",", stringsAsFactors = F)
+metrics = read.table("results/5365339-11/model_metrics.txt", sep = ",", stringsAsFactors = F)
 prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5365339-11/", pattern = "last_model_prediction_rank",
+preds = list.files("results/5365339-11", pattern = "last_model_prediction_rank",
                    full.names = T)
+
+pred_counts_onehot = rep(0, nrow(prediction))
+pred_counts_aaindex = rep(0, nrow(prediction))
 pred_counts = rep(0, nrow(prediction))
-pb = txtProgressBar(min = 0 , max = nrow(prediction), style = 3)
+
+pb = txtProgressBar(min = 0 , max = length(preds), style = 3)
 for (p in 1:length(preds)) {
   setTxtProgressBar(pb, p)
   
+  rank = str_split(preds[p], "[:punct:]", simplify = T)[, 7]
+  rank = str_sub(rank, start = 5, end = nchar(rank)) %>% as.character %>% as.numeric()
+  
   cnt_pred = read.csv(preds[p], stringsAsFactors = F)
+  
+  if (rank %% 2 == 0){
+    pred_counts_onehot = pred_counts_onehot + (cnt_pred$pred_count * 1/(length(preds)*0.5))
+  } else {
+    pred_counts_aaindex = pred_counts_aaindex + (cnt_pred$pred_count * 1/(length(preds)*0.5))
+  }
+  
   pred_counts = pred_counts + (cnt_pred$pred_count * 1/length(preds))
 }
 
 prediction$pred_count = pred_counts
+# prediction$pred_count = pred_counts_onehot
+# prediction$pred_count = pred_counts_aaindex
+
+prediction$count = 2^(prediction$count) - 1
+prediction$pred_count = 2^(prediction$pred_count) - 1
 
 
 ########## training metrics ##########
@@ -117,9 +136,6 @@ plotting = function(col1 = "", col2 = "", name = ""){
 
 ########## regression ##########
 
-prediction$count = 2^(prediction$count) - 1
-prediction$pred_count = 2^(prediction$pred_count) - 1
-
 # general
 {
   summary(prediction$count) %>% print()
@@ -187,8 +203,8 @@ if(file.exists(out)) {
 }
 
 ########## cluster proteins ##########
-prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
-prediction$pred_count = pred_counts
+# prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
+# prediction$pred_count = pred_counts
 
 prots = prediction$Accession %>% unique()
 dist = list()
@@ -269,7 +285,7 @@ window_size = 25
 
 prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
 prots = prots[which(prots$Accession %in% prediction$Accession), ]
-prots = left_join(prots, cluster)
+# prots = left_join(prots, cluster)
 
 # get counts for every aa position from token counts
 countsTrue = list()
@@ -318,7 +334,8 @@ for (k in 1:length(countsTrue)) {
   y_pred = countsPred[[k]]
   y_pred.roll = countsPred.roll[[k]]
   x = seq(length(y_true))
-  # max count
+  # max and min count
+  start = min(y_pred %>% na.omit, y_true %>% na.omit()) - .2
   stop = max(y_pred %>% na.omit, y_true %>% na.omit()) + .2
   
   
@@ -332,7 +349,7 @@ for (k in 1:length(countsTrue)) {
        type = "l",
        col="firebrick",
        main = prots$Accession[k],
-       sub = paste0("CLUSTER: ", prots$n_cluster[k]),
+       # sub = paste0("CLUSTER: ", prots$n_cluster[k]),
        axes = F,
        ylab = "counts",
        xlab = "position",
