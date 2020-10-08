@@ -44,7 +44,7 @@ windowTokens[U_idx, ] = windowTokens_U
 
 
 ### sample
-testSize = 0.4
+testSize = 0.2
 
 n_train = ceiling(length(accU) * (1-testSize))
 n_test = floor(length(accU) * testSize)
@@ -62,7 +62,6 @@ testing.acc = testing.acc[-which(str_split_fixed(testing.acc, coll("-"), Inf)[,1
 training.acc = training.acc %>%
   as.character()
 
-
 # split data sets
 training = windowTokens[windowTokens$Accession %in% training.acc, ]
 testing = windowTokens[windowTokens$Accession %in% testing.acc, ]
@@ -72,6 +71,36 @@ intersect(training$tokens, testing$tokens) %>% length()
 rm = which(testing$tokens %in% training$tokens)
 if (length(rm) > 0){ testing = testing[-rm, ] }
 
+
+# sample training data based on average count per protein
+average_counts = rep(NA, length(training.acc))
+pb = txtProgressBar(min = 0, max = length(training.acc), style = 3)
+for (t in 1:length(training.acc)) {
+  setTxtProgressBar(pb, t)
+  average_counts[t] = training$counts[training$Accession == training.acc[t]] %>% mean()
+}
+average = cbind(training.acc, average_counts) %>% as.data.frame()
+
+# create bins covering same count ranges
+bins = cut(x = average$average_counts %>% as.character() %>% as.numeric(),
+           breaks = 10, labels = F)
+average$bin = bins
+
+sample_size = ceiling(nrow(average) / 10)
+bins_unique = bins %>% unique()
+k = c()
+for (j in 1:length(bins_unique)) {
+  
+  cnt = which(average$bin == bins_unique[j])
+  if (sample_size > length(cnt)) {sample_size = length(cnt)}
+  
+  k = c(k, cnt[sample(x = length(cnt), size = sample_size)])
+}
+
+average$average_counts[k] %>% as.character() %>% as.numeric() %>% density() %>% plot()
+average$average_counts %>% as.character() %>% as.numeric() %>% density() %>% plot()
+
+training = training[training$Accession %in% average$training.acc[k], ]
 
 # downsample
 training.5per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.05)), ]
@@ -84,8 +113,8 @@ training.50per = training[training$Accession %in% sample(training.acc, ceiling(l
 testing.50per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.5)), ]
 
 ### OUTPUT ###
-write.csv(training, "data/windowTokens_training.csv", row.names = F)
-write.csv(testing, "data/windowTokens_testing.csv", row.names = F)
+write.csv(training, "data/windowTokens_training100-sample.csv", row.names = F)
+write.csv(testing, "data/windowTokens_testing100-sample.csv", row.names = F)
 
 write.csv(training.5per, "data/windowTokens_training05.csv", row.names = F)
 write.csv(testing.5per, "data/windowTokens_testing05.csv", row.names = F)

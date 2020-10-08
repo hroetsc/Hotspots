@@ -59,8 +59,8 @@ def generate_matrices(enc, spec):
                      [[window, encoding, emb_test, acc_test, embeddingDim, window_size, sgt] for window in list(windows_test)] )
 
 
-generate_matrices(enc='AAindex', spec='50-2')
-generate_matrices(enc='oneHOT', spec='50-2')
+generate_matrices(enc='AAindex', spec='100-sample')
+generate_matrices(enc='oneHOT', spec='100-sample')
 # generate_matrices(enc='SGT', spec='05')
 
 pool.close()

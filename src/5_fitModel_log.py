@@ -38,7 +38,7 @@ print('HYPERPARAMETERS')
 embeddingDim = 20
 windowSize = 25
 
-epochs = 400
+epochs = 200
 pseudocounts = 1
 no_cycles = int(epochs / 10)
 
@@ -63,6 +63,11 @@ print("-------------------------------------------------------------------------
 best_model_path = '/scratch2/hroetsc/Hotspots/results/model/best_model_rank{}.h5'.format(hvd.rank())
 last_model_path = '/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank())
 
+if os.path.exists(best_model_path):
+    os.remove(best_model_path)
+
+if os.path.exists(last_model_path):
+    os.remove(last_model_path)
 
 print('#####')
 print('ONE HOT AND AA INDEX ON DIFFERENT RANKS')
@@ -72,19 +77,19 @@ print('#####')
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
 
 tokens, counts, emb, dist = open_and_format_matrices(group='train', encoding=enc,
-                                                     spec='100-sample',
+                                                     spec='50',
                                                      extension='',
                                                      windowSize=windowSize, embeddingDim=embeddingDim,
                                                      relative_dist=False,
-                                                     protein_norm=False,
+                                                     protein_norm=True,
                                                      log_counts=True)
 tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='test', encoding=enc,
-                                                                         spec='100-sample',
+                                                                         spec='50',
                                                                          extension='',
                                                                          windowSize=windowSize,
                                                                          embeddingDim=embeddingDim,
                                                                          relative_dist=False,
-                                                                         protein_norm=False,
+                                                                         protein_norm=True,
                                                                          log_counts=True)
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias

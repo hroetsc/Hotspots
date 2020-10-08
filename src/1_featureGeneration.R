@@ -100,7 +100,6 @@ get_windows_counts = function(extension = "", outfile = ""){
         
         wnd.Tokens$counts[pos1] = windowCounts[[i]][c(loc[1]:loc[2])] %>% mean()
         
-        
         # increment positions of sliding window
         pos1 = pos1 + 1
         pos2 = pos2 + 1

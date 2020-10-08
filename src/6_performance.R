@@ -12,7 +12,7 @@ library(ggplot2)
 library(tidyr)
 library(zoo)
 
-JOBID = "5365339-11-last-nolog"
+JOBID = "5399141-1-last-nolog"
 
 
 ### INPUT ###
@@ -22,14 +22,14 @@ system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/bes
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/last_model_prediction* results/")
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model/* results/model/")
 
-metrics = read.table("results/5365339-11/model_metrics.txt", sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
+metrics = read.table("results/5401673-3/model_metrics.txt", sep = ",", stringsAsFactors = F)
+prediction = read.csv("results/log_2/last_model_prediction_rank0.csv", stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5365339-11", pattern = "last_model_prediction_rank",
+preds = list.files("results/log_2", pattern = "last_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
@@ -50,7 +50,7 @@ for (p in 1:length(preds)) {
   } else {
     pred_counts_aaindex = pred_counts_aaindex + (cnt_pred$pred_count * 1/(length(preds)*0.5))
   }
-  
+
   pred_counts = pred_counts + (cnt_pred$pred_count * 1/length(preds))
 }
 
@@ -58,8 +58,14 @@ prediction$pred_count = pred_counts
 # prediction$pred_count = pred_counts_onehot
 # prediction$pred_count = pred_counts_aaindex
 
+count = prediction$count
+pred_count = prediction$pred_count
+
 prediction$count = 2^(prediction$count) - 1
 prediction$pred_count = 2^(prediction$pred_count) - 1
+
+# prediction$count = log2(prediction$count + 1)
+# prediction$pred_count = log2(prediction$pred_count + 1)
 
 
 ########## training metrics ##########
@@ -165,6 +171,7 @@ plotting = function(col1 = "", col2 = "", name = ""){
   all.metrics
 }
 
+
 start = min(prediction$count, prediction$pred_count) - 0.1
 stop = max(prediction$count, prediction$pred_count) + 0.1
 
@@ -174,7 +181,7 @@ prediction[, c("count", "pred_count")] %>% gather() %>%
   geom_density() +
   ggtitle("true and predicted hotspot counts") +
   theme_bw()
-ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-dens-nolog.png"), plot = last_plot(),
+ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-dens.png"), plot = last_plot(),
        device = "png", dpi = "retina")
 
 ggplot(prediction, aes(x = count, y = pred_count)) +
@@ -186,7 +193,7 @@ ggplot(prediction, aes(x = count, y = pred_count)) +
   ggtitle("true and predicted hotspot counts",
           subtitle = paste0("PCC: ", pc %>% round(4), ", R^2: ", summary(pred.lm)$r.squared %>% round(4))) +
   theme_bw()
-ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-nolog.png"), plot = last_plot(),
+ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter.png"), plot = last_plot(),
        device = "png", dpi = "retina")
 
 # append to past metrics
@@ -201,6 +208,7 @@ if(file.exists(out)) {
         append = F, sep = ",")
   
 }
+
 
 ########## cluster proteins ##########
 # prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
@@ -227,15 +235,21 @@ for (i in 1:length(prots)) {
     pairwise.dist[i, j] = ks.test(dist[[i]], dist[[j]], alternative = "two.sided")$statistic
   }
 }
+
+write.csv(pairwise.dist, "results/paiwise_ks-statistics_test50.csv", row.names = F)
 write.csv(pairwise.dist, "results/paiwise_ks-statistics_test50-2.csv", row.names = F)
+
+pairwise.dist = read.csv("results/paiwise_ks-statistics_test50.csv", stringsAsFactors = F)
+pairwise.dist = read.csv("results/paiwise_ks-statistics_test50-2.csv", stringsAsFactors = F)
+
 
 # clustering
 km.results = kmeans(pairwise.dist, centers = 4, iter.max = 20, nstart = 4)
-cluster = km.results$cluster %>% as.data.frame()
-cluster$Accession = names(km.results$cluster)
+cluster = km.results$cluster %>% as.numeric() %>% as.data.frame()
+cluster$Accession = names(pairwise.dist) %>% str_replace_all(pattern = coll("."),
+                                                             replacement = coll("-"))
 names(cluster)[1] = "n_cluster"
-
-prediction.cl = left_join(prediction, cluster)
+prediction.cl = left_join(prediction, cluster) %>% na.omit()
 
 ggplot(prediction.cl, aes(x = count, y = pred_count, col = factor(n_cluster))) +
   geom_point(alpha = 0.1, size = 0.1) +
@@ -256,31 +270,14 @@ for (c in cl){
   print(".............................................................")
   print(c)
   summary(prediction.cl$count[prediction.cl$n_cluster == c]) %>% print()
-  pc = cor(prediction$count[prediction.cl$n_cluster == c],
-           prediction$pred_count[prediction.cl$n_cluster == c], method = "pearson")
-  print(pc)
+  cnt.pc = cor(prediction$count[prediction.cl$n_cluster == c],
+               prediction$pred_count[prediction.cl$n_cluster == c], method = "pearson")
+  print(cnt.pc)
   print(".............................................................")
 }
 
-########## scale protein counts by min ##########
 
-# scaling = function(x = "", a = "", b = ""){
-#   return((b-a)*((x - min(x)) / (max(x) - min(x))) + a)
-# }
-# 
-# prots = prediction$Accession %>% unique()
-# 
-# pb = txtProgressBar(min = 0, max = length(prots), style = 3)
-# for (i in 1:length(prots)){
-#   setTxtProgressBar(pb, i)
-#   k = which(prediction$Accession == prots[i])
-#   prediction$pred_count[k] = scaling(x = prediction$pred_count[k],
-#                                      a = min(prediction$pred_count[k]),
-#                                      b = max(prediction$pred_count[k]))
-# }
-# 
-
-########## map substrates ##########
+########## map peptides to protein sequence ##########
 window_size = 25
 
 prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
@@ -349,7 +346,7 @@ for (k in 1:length(countsTrue)) {
        type = "l",
        col="firebrick",
        main = prots$Accession[k],
-       # sub = paste0("CLUSTER: ", prots$n_cluster[k]),
+       sub = paste0("CLUSTER: ", prots$n_cluster[k]),
        axes = F,
        ylab = "counts",
        xlab = "position",
@@ -391,4 +388,57 @@ for (k in 1:length(countsTrue)) {
 dev.off()
 
 
+########## use rolling mean for correlation ##########
+pred.rollmean = c()
+true.rollmean = c()
 
+pb = txtProgressBar(min = 0, max = length(countsTrue), style = 3)
+for (i in 1:length(countsTrue)) {
+  setTxtProgressBar(pb, i)
+  
+  pred.rollmean = c(pred.rollmean,
+                    countsPred.roll[[i]])
+  t = countsTrue[[i]]
+  true.rollmean = c(true.rollmean,
+                    t[5:(length(t)-4)])
+  
+}
+
+prediction.roll = cbind(true.rollmean, pred.rollmean) %>% as.data.frame() %>% na.omit()
+names(prediction.roll) = c("count", "pred_count")
+pc = cor(prediction.roll$count,
+         prediction.roll$pred_count,
+         method = "pearson")
+pred.lm = lm(pred_count ~ count, data = prediction.roll)
+
+ggplot(prediction.roll, aes(x = count, y = pred_count)) +
+  geom_point(alpha = 0.1, size = 0.1) +
+  xlim(c(start, stop)) +
+  ylim(c(start, stop)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
+  coord_equal() +
+  ggtitle("true and predicted hotspot counts",
+          subtitle = paste0("PCC: ", pc %>% round(4), ", R^2: ", summary(pred.lm)$r.squared %>% round(4))) +
+  theme_bw()
+ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean.png"), plot = last_plot(),
+       device = "png", dpi = "retina")
+
+
+# remove hotspots with low prediction
+k = which(prediction.roll$count > 6 & prediction.roll$pred_count < 1)
+pc = cor(prediction.roll$count[-k],
+         prediction.roll$pred_count[-k],
+         method = "pearson")
+pred.lm = lm(pred_count ~ count, data = prediction.roll[-k, ])
+
+ggplot(prediction.roll[-k, ], aes(x = count, y = pred_count)) +
+  geom_point(alpha = 0.1, size = 0.1) +
+  xlim(c(start, stop)) +
+  ylim(c(start, stop)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
+  coord_equal() +
+  ggtitle("true and predicted hotspot counts",
+          subtitle = paste0("PCC: ", pc %>% round(4), ", R^2: ", summary(pred.lm)$r.squared %>% round(4))) +
+  theme_bw()
+ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean-nohotspots.png"), plot = last_plot(),
+       device = "png", dpi = "retina")
