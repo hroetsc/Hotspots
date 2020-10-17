@@ -7,12 +7,15 @@
 
 library(dplyr)
 library(stringr)
+library(data.table)
 library(rhdf5)
 library(ggplot2)
 library(tidyr)
+library(tidymodels)
+library(DescTools)
 library(zoo)
 
-JOBID = "5399141-1-last-nolog"
+JOBID = "5503991-0"
 
 
 ### INPUT ###
@@ -22,14 +25,17 @@ system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/bes
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/last_model_prediction* results/")
 system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model/* results/model/")
 
-metrics = read.table("results/5401673-3/model_metrics.txt", sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/log_2/last_model_prediction_rank0.csv", stringsAsFactors = F)
+metrics = read.table("results/model_metrics.txt",
+                     sep = ",", stringsAsFactors = F)
+prediction = read.csv("results/last_model_prediction_rank0.csv",
+                      stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/log_2", pattern = "last_model_prediction_rank",
+preds = list.files("results",
+                   pattern = "last_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
@@ -40,7 +46,7 @@ pb = txtProgressBar(min = 0 , max = length(preds), style = 3)
 for (p in 1:length(preds)) {
   setTxtProgressBar(pb, p)
   
-  rank = str_split(preds[p], "[:punct:]", simplify = T)[, 7]
+  rank = str_split(preds[p], "[:punct:]", simplify = T)[, 5]
   rank = str_sub(rank, start = 5, end = nchar(rank)) %>% as.character %>% as.numeric()
   
   cnt_pred = read.csv(preds[p], stringsAsFactors = F)
@@ -63,9 +69,6 @@ pred_count = prediction$pred_count
 
 prediction$count = 2^(prediction$count) - 1
 prediction$pred_count = 2^(prediction$pred_count) - 1
-
-# prediction$count = log2(prediction$count + 1)
-# prediction$pred_count = log2(prediction$pred_count + 1)
 
 
 ########## training metrics ##########
@@ -236,11 +239,8 @@ for (i in 1:length(prots)) {
   }
 }
 
-write.csv(pairwise.dist, "results/paiwise_ks-statistics_test50.csv", row.names = F)
-write.csv(pairwise.dist, "results/paiwise_ks-statistics_test50-2.csv", row.names = F)
-
-pairwise.dist = read.csv("results/paiwise_ks-statistics_test50.csv", stringsAsFactors = F)
-pairwise.dist = read.csv("results/paiwise_ks-statistics_test50-2.csv", stringsAsFactors = F)
+write.csv(pairwise.dist, "results/pairwise_ks-statistics_test100-sample.csv", row.names = F)
+pairwise.dist = read.csv("results/pairwise_ks-statistics_test100-sample.csv", stringsAsFactors = F)
 
 
 # clustering
@@ -253,7 +253,7 @@ prediction.cl = left_join(prediction, cluster) %>% na.omit()
 
 ggplot(prediction.cl, aes(x = count, y = pred_count, col = factor(n_cluster))) +
   geom_point(alpha = 0.1, size = 0.1) +
-  scale_color_viridis_d(option = "magma") +
+  scale_color_viridis_d() +
   xlim(c(start, stop)) +
   ylim(c(start, stop)) +
   geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
@@ -280,7 +280,7 @@ for (c in cl){
 ########## map peptides to protein sequence ##########
 window_size = 25
 
-prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
+prots = read.csv("/media/hanna/Hanna2/DATA/Hotspots/DATA/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
 prots = prots[which(prots$Accession %in% prediction$Accession), ]
 # prots = left_join(prots, cluster)
 
@@ -424,21 +424,113 @@ ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean.png"),
        device = "png", dpi = "retina")
 
 
-# remove hotspots with low prediction
-k = which(prediction.roll$count > 6 & prediction.roll$pred_count < 1)
-pc = cor(prediction.roll$count[-k],
-         prediction.roll$pred_count[-k],
-         method = "pearson")
-pred.lm = lm(pred_count ~ count, data = prediction.roll[-k, ])
+########## binarize counts ##########
+prediction.binary = prediction
+prediction.binary$count[prediction.binary$count > 0] = 1
 
-ggplot(prediction.roll[-k, ], aes(x = count, y = pred_count)) +
-  geom_point(alpha = 0.1, size = 0.1) +
-  xlim(c(start, stop)) +
-  ylim(c(start, stop)) +
+
+roc.pr.CURVE = function(prediction = "") {
+  
+  PRECISION = function(TP = "", FP = "") {
+    return(as.numeric(TP) / (as.numeric(TP) + as.numeric(FP)))
+  }
+  
+  RECALL = function(TP = "", P = "") {
+    return(as.numeric(TP) / as.numeric(P))
+  }
+  
+  SENSITIVITY = function(TP = "", P = "") {
+    return(as.numeric(TP) / as.numeric(P))
+  }
+  
+  SPECIFICITY = function(TN = "", N = "") {
+    return(as.numeric(TN) / as.numeric(N))
+  }
+  
+  th_range = c(-Inf,
+               seq(min(prediction$pred_count), max(prediction$pred_count), length.out = 300),
+               Inf)
+  
+  sens = rep(NA, length(th_range))
+  spec = rep(NA, length(th_range))
+  
+  prec = rep(NA, length(th_range))
+  rec = rep(NA, length(th_range))
+  
+  mcc = rec = rep(NA, length(th_range))
+  
+  pb = txtProgressBar(min = 0, max = length(th_range), style = 3)
+  for (t in seq_along(th_range)) {
+    setTxtProgressBar(pb, t)
+    
+    cnt_dat = prediction %>% mutate(pred = ifelse(pred_count > th_range[t], 1, 0))
+    
+    # P, N, TP, TN, FP
+    P = cnt_dat[cnt_dat$count == 1, ] %>% nrow()
+    N = cnt_dat[cnt_dat$count == 0, ] %>% nrow()
+    
+    TP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$count == 1, ] %>% nrow()
+    TN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$count == 0, ] %>% nrow()
+    
+    FP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$count == 0, ] %>% nrow()
+    FN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$count == 1, ] %>% nrow()
+    
+    sens[t] = SENSITIVITY(TP, P)
+    spec[t] = SPECIFICITY(TN, N)
+    
+    prec[t] = PRECISION(TP, FP)
+    rec[t] = RECALL(TP, P)
+  }
+  
+  curve = data.frame(score = th_range,
+                     precision = prec,
+                     recall = rec,
+                     sensitivity = sens,
+                     specificity = spec)
+  
+  return(curve)
+}
+
+curve = roc.pr.CURVE(prediction = prediction.binary)
+
+# AUC
+pr.na = which(! is.na(curve$precision | curve$recall))
+pr.auc = AUC(curve$recall[pr.na],
+             curve$precision[pr.na])
+print(paste0("PR-AUC: ", pr.auc))
+
+roc.na = which(! is.na(curve$sensitivity | curve$specificity))
+roc.auc = AUC(curve$specificity[roc.na],
+              curve$sensitivity[roc.na])
+print(paste0("ROC-AUC: ", roc.auc))
+
+
+theme_set(theme_bw())
+roc.curve = curve %>%
+  ggplot() +
+  geom_path(aes(1 - specificity, sensitivity)) + 
   geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
-  coord_equal() +
-  ggtitle("true and predicted hotspot counts",
-          subtitle = paste0("PCC: ", pc %>% round(4), ", R^2: ", summary(pred.lm)$r.squared %>% round(4))) +
-  theme_bw()
-ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean-nohotspots.png"), plot = last_plot(),
-       device = "png", dpi = "retina")
+  xlim(c(0,1)) +
+  ylim(c(0,1)) +
+  ggtitle("ROC curve for binarized hotspot counts",
+          subtitle = paste0("AUC: ", roc.auc %>% round(4)))
+roc.curve
+
+pr.curve = curve %>%
+  ggplot() +
+  geom_path(aes(recall, precision)) +
+  geom_abline(intercept = length(which(prediction.binary$count == 1))/nrow(prediction.binary),
+              slope = 0, linetype = "dotted") +
+  xlim(c(0,1)) +
+  ylim(c(0,1)) +
+  ggtitle("PR curve for binarized hotspot counts",
+          subtitle = paste0("AUC: ", pr.auc %>% round(4)))
+pr.curve
+
+
+### OUTPUT ###
+ggsave(paste0("results/plots/", JOBID, "_ROC.png"),
+       roc.curve, device = "png", dpi = "retina")
+ggsave(paste0("results/plots/", JOBID, "_PR.png"),
+       pr.curve, device = "png", dpi = "retina")
+

@@ -71,14 +71,17 @@ print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
 
-tokens, counts, emb, dist = open_and_format_matrices(group='train', encoding=enc,
+tokens, counts, emb, dist = open_and_format_matrices(group='train',
+                                                     encoding=enc,
                                                      spec='100-sample',
                                                      extension='',
-                                                     windowSize=windowSize, embeddingDim=embeddingDim,
+                                                     windowSize=windowSize,
+                                                     embeddingDim=embeddingDim,
                                                      relative_dist=False,
                                                      protein_norm=False,
                                                      log_counts=True)
-tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='test', encoding=enc,
+tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='test',
+                                                                         encoding=enc,
                                                                          spec='100-sample',
                                                                          extension='',
                                                                          windowSize=windowSize,
@@ -244,7 +247,11 @@ print('MODEL TRAINING')
 # define callbacks
 callbacks = [RestoreBestModel(last_model_path),
              CosineAnnealing(no_cycles=no_cycles, no_epochs=epochs, max_lr=max_lr),
-             hvd.callbacks.BroadcastGlobalVariablesCallback(0)]
+             hvd.callbacks.BroadcastGlobalVariablesCallback(0),
+             keras.callbacks.ModelCheckpoint(filepath=last_model_path,
+                                             verbose=1,
+                                             monitor='val_loss',
+                                             save_freq='epoch')]
 
 # define number of steps - make sure that no. of steps is the same for all ranks!
 # otherwise, stalled ranks problem might occur

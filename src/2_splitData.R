@@ -8,11 +8,15 @@
 library(plyr)
 library(dplyr)
 library(stringr)
-
+library(data.table)
 
 ### INPUT ###
-windowTokens = read.csv("data/windowTokens.csv", stringsAsFactors = F)
+windowTokens = fread("data/windowTokens.csv") %>%
+  as.data.frame()
 accU = windowTokens$Accession %>% unique()
+
+load("data/windowCounts.RData")
+
 
 ### MAIN PART ###
 ### characterise count distributions
@@ -44,86 +48,88 @@ windowTokens[U_idx, ] = windowTokens_U
 
 
 ### sample
-testSize = 0.2
+testSize = 0.1
 
-n_train = ceiling(length(accU) * (1-testSize))
-n_test = floor(length(accU) * testSize)
+# no isoforms of training data in testing data (and vice versa!)
+accU_noisoforms = str_split_fixed(accU, coll("-"), Inf)[, 1] %>% unique()
 
-training.acc = accU[sample(length(accU), n_train)]
-testing.acc = accU[sample(length(accU), n_test)]
+n_train = ceiling(length(accU_noisoforms) * (1-testSize))
+n_test = floor(length(accU_noisoforms) * testSize)
+
+training.acc = accU_noisoforms[sample(length(accU_noisoforms), n_train)]
+testing.acc = accU_noisoforms[sample(length(accU_noisoforms), n_test)]
 
 
-#### clean data 
-# no isoforms of training data in testing data
-testing.acc = testing.acc %>%
-  as.character()
-testing.acc = testing.acc[-which(str_split_fixed(testing.acc, coll("-"), Inf)[,1] %in% training.acc)]
-
-training.acc = training.acc %>%
-  as.character()
-
+#### clean data
 # split data sets
-training = windowTokens[windowTokens$Accession %in% training.acc, ]
-testing = windowTokens[windowTokens$Accession %in% testing.acc, ]
+train_idx = which(str_split_fixed(windowTokens$Accession, coll("-"), Inf)[, 1] %>%
+                    as.character() %in% training.acc)
+training = windowTokens[train_idx, ]
 
-# remove sliding windows that occur in training data set from testing data set
-intersect(training$tokens, testing$tokens) %>% length()
-rm = which(testing$tokens %in% training$tokens)
-if (length(rm) > 0){ testing = testing[-rm, ] }
+test_idx = which(str_split_fixed(windowTokens$Accession, coll("-"), Inf)[, 1] %>%
+                    as.character() %in% testing.acc)
+testing = windowTokens[test_idx, ]
 
 
 # sample training data based on average count per protein
-average_counts = rep(NA, length(training.acc))
-pb = txtProgressBar(min = 0, max = length(training.acc), style = 3)
-for (t in 1:length(training.acc)) {
+trainCounts = windowCounts[names(windowCounts) %in% training$Accession]
+
+average_counts = rep(NA, length(trainCounts))
+pb = txtProgressBar(min = 0, max = length(trainCounts), style = 3)
+for (t in 1:length(trainCounts)) {
   setTxtProgressBar(pb, t)
-  average_counts[t] = training$counts[training$Accession == training.acc[t]] %>% mean()
+  average_counts[t] = trainCounts[[t]] %>% mean()
 }
-average = cbind(training.acc, average_counts) %>% as.data.frame()
+average = cbind(names(trainCounts), average_counts) %>% as.data.frame()
 
-# create bins covering same count ranges
-bins = cut(x = average$average_counts %>% as.character() %>% as.numeric(),
-           breaks = 10, labels = F)
-average$bin = bins
+# keep all proteins that have an average count > 0.6
+high_counts = which(average_counts > 0.6)
+# from the ones lower than 0.5, sample as many as are in the > 0.6 data set
+low_counts = which(average_counts <= 0.6)
+low_counts = low_counts[sample(length(low_counts), length(high_counts))]
 
-sample_size = ceiling(nrow(average) / 10)
-bins_unique = bins %>% unique()
-k = c()
-for (j in 1:length(bins_unique)) {
-  
-  cnt = which(average$bin == bins_unique[j])
-  if (sample_size > length(cnt)) {sample_size = length(cnt)}
-  
-  k = c(k, cnt[sample(x = length(cnt), size = sample_size)])
-}
+keep = which(training$Accession %in% unique(average$V1[c(high_counts, low_counts)]))
 
-average$average_counts[k] %>% as.character() %>% as.numeric() %>% density() %>% plot()
 average$average_counts %>% as.character() %>% as.numeric() %>% density() %>% plot()
+average$average_counts[c(low_counts, high_counts)] %>% as.character() %>% as.numeric() %>% density() %>% lines(col = "red")
 
-training = training[training$Accession %in% average$training.acc[k], ]
+training = training[keep, ]
+
+# do not execute bc positions as additional feature
+# remove sliding windows that occur in training data set from testing data set
+# intersect(training.tmp$window, testing$window) %>% length()
+# rm = which(testing$window %in% training.tmp$window)
+# if (length(rm) > 0){ testing.tmp = testing[-rm, ] }
+
 
 # downsample
-training.5per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.05)), ]
-testing.5per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.05)), ]
+# training.5per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.05)), ]
+# testing.5per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.05)), ]
+# 
+# training.20per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.2)), ]
+# testing.20per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.2)), ]
+# 
+# training.50per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.5)), ]
+# testing.50per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.5)), ]
 
-training.20per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.2)), ]
-testing.20per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.2)), ]
-
-training.50per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.5)), ]
-testing.50per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.5)), ]
 
 ### OUTPUT ###
-write.csv(training, "data/windowTokens_training100-sample.csv", row.names = F)
-write.csv(testing, "data/windowTokens_testing100-sample.csv", row.names = F)
+write.csv(training,
+          "/media/hanna/Hanna2/DATA/Hotspots/DATA/windowTokens_training100-sample.csv",
+          row.names = F)
+write.csv(testing,
+          "/media/hanna/Hanna2/DATA/Hotspots/DATA/windowTokens_testing100-sample.csv",
+          row.names = F)
 
-write.csv(training.5per, "data/windowTokens_training05.csv", row.names = F)
-write.csv(testing.5per, "data/windowTokens_testing05.csv", row.names = F)
+# write.csv(training.5per, "data/windowTokens_training05.csv", row.names = F)
+# write.csv(testing.5per, "data/windowTokens_testing05.csv", row.names = F)
+# 
+# write.csv(training.20per, "data/windowTokens_training20.csv", row.names = F)
+# write.csv(testing.20per, "data/windowTokens_testing20.csv", row.names = F)
+# 
+# write.csv(training.50per, "data/windowTokens_training50.csv", row.names = F)
+# write.csv(testing.50per, "data/windowTokens_testing50.csv", row.names = F)
 
-write.csv(training.20per, "data/windowTokens_training20.csv", row.names = F)
-write.csv(testing.20per, "data/windowTokens_testing20.csv", row.names = F)
-
-write.csv(training.50per, "data/windowTokens_training50.csv", row.names = F)
-write.csv(testing.50per, "data/windowTokens_testing50.csv", row.names = F)
 
 #### get the second half of the data
 training = read.csv("data/windowTokens_training.csv", stringsAsFactors = F)

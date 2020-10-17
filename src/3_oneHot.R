@@ -10,7 +10,8 @@ library(stringr)
 
 
 ### INPUT ###
-windows = read.csv("data/windowTokens_training20.csv", stringsAsFactors = F, header = T)
+windows = read.csv("/media/hanna/Hanna2/DATA/Hotspots/DATA/windowTokens_training05.csv",
+                   stringsAsFactors = F, header = T)
 
 
 ### MAIN PART ###
@@ -28,5 +29,6 @@ names(aas)[1] = "aa"
 
 
 ### OUTPUT ###
-write.csv(aas, "data/ENCODING_oneHOT.csv", row.names = F)
+write.csv(aas, "/media/hanna/Hanna2/DATA/Hotspots/DATA/ENCODING_oneHOT.csv",
+          row.names = F)
 

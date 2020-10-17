@@ -5,7 +5,6 @@
 # output: feature set (counts and tokens for every sequence)
 # author: HR
 
-
 library(plyr)
 library(dplyr)
 library(stringr)
@@ -25,7 +24,8 @@ load("HOTSPOTS/accU.RData")
 load("HOTSPOTS/RESULTS/windowCounts.RData")
 
 # human proteome
-prots = read.csv("../Seq2Vec/files/proteome_human.csv", stringsAsFactors = F, header = T)
+prots = read.csv("/media/hanna/Hanna2/DATA/GENERAL/proteome_human.csv",
+                 stringsAsFactors = F, header = T)
 
 
 ### MAIN PART ###
@@ -33,17 +33,40 @@ names(windowCounts) = accU
 
 # remove proteins with "lonely peptides"
 # lonely peptide --> several short disconnected non-overlapping regions with only one count per aa
-# conditions: max count must be 1 and there
+# conditions: max count must be 1
 rm = c()
 for (w in 1:length(windowCounts)){
   cnt = windowCounts[[w]]
   if (max(cnt) == 1){
     rm = c(rm, w)
   }
-  
+
 }
+
 length(rm)
 windowCounts = windowCounts[-rm]
+
+
+# peptide density: sum of all counts / protein length
+# pep_dens = rep(NA, length(windowCounts))
+# 
+# pdf("results/peptide_density.pdf", width = 12, height = 8)
+# par(mfrow = c(2,2))
+# for (w in 1:length(windowCounts)){
+#   pep_dens[w] = (sum(windowCounts[[w]]) / (length(windowCounts[[w]])^2)) * length(which(windowCounts[[w]] > 0))
+#   plot(windowCounts[[w]], type = "l",
+#        xlab = "position",
+#        ylab = "count",
+#        main = names(windowCounts)[w])
+#   abline(h = pep_dens[w], col = "red")
+# }
+# dev.off()
+# 
+# hist(log10(pep_dens))
+# cutoff = 0.25
+# keep = which(pep_dens > cutoff)
+# windowCounts = windowCounts[keep]
+
 
 # keep only proteins with hotspots
 prots = prots[which(prots$Accession %in% names(windowCounts)), ]
@@ -106,8 +129,6 @@ get_windows_counts = function(extension = "", outfile = ""){
         
       }
       
-      # normalise by protein length
-      wnd.Tokens$counts = wnd.Tokens$counts / nchar(cnt.Prot$seqs)
       windowTokens[[i]] = wnd.Tokens
     }
     
@@ -116,6 +137,7 @@ get_windows_counts = function(extension = "", outfile = ""){
   
   ### OUTPUT ###
   save(windowTokens, file = paste0(outfile, ".RData"))
+  save(windowCounts, file = "data/windowCounts.RData")
   
   # reduce feature space
   # average counts of neighbouring identical token sets - should not happen anymore
@@ -149,10 +171,11 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 
 # apply
-get_windows_counts(extension = "none", outfile = "data/windowTokens_norm")
-get_windows_counts(extension = "N", outfile = "data/Next_windowTokens")
-get_windows_counts(extension = "C", outfile = "data/Cext_windowTokens")
-get_windows_counts(extension = "NandC", outfile = "data/NandCext_windowTokens")
+get_windows_counts(extension = "none",
+                   outfile = "data/windowTokens")
+# get_windows_counts(extension = "N", outfile = "data/Next_windowTokens")
+# get_windows_counts(extension = "C", outfile = "data/Cext_windowTokens")
+# get_windows_counts(extension = "NandC", outfile = "data/NandCext_windowTokens")
 
 
 # save proteins with hotspots
@@ -170,6 +193,6 @@ for (i in 1:nrow(prots_U)) {
 
 prots[U_idx, ] = prots_U
 
-write.csv(prots, "data/proteins_w_hotspots.csv", row.names = F)
+write.csv(prots, "/media/hanna/Hanna2/DATA/Hotspots/DATA/proteins_w_hotspots.csv", row.names = F)
 
 
