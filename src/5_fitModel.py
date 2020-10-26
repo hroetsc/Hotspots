@@ -38,12 +38,12 @@ print('HYPERPARAMETERS')
 embeddingDim = 20
 windowSize = 25
 
-epochs = 400
+epochs = 300
 pseudocounts = 1
 no_cycles = int(epochs / 10)
 
 batch_size = 128
-max_lr = 0.001
+max_lr = 0.01
 starting_filter = 16
 kernel_size = 3
 block_size = 5
@@ -70,6 +70,7 @@ print('no extension')
 print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
+#enc = 'oneHOT'
 
 tokens, counts, emb, dist = open_and_format_matrices(group='train',
                                                      encoding=enc,
@@ -89,6 +90,7 @@ tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='
                                                                          relative_dist=False,
                                                                          protein_norm=False,
                                                                          log_counts=True)
+
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
 
@@ -291,7 +293,7 @@ fit = model.fit(x=[emb, dist],
 
 ### OUTPUT ###
 print('SAVE MODEL AND METRICS')
-save_training_res(model, fit, last_model_path)
+save_training_res(model, fit, best_model_path)
 
 ########## part 2: make prediction ##########
 

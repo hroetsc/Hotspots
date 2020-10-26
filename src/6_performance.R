@@ -15,27 +15,30 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5503991-0"
+JOBID = "5553743-1-onehot-nolog"
 
 
 ### INPUT ###
 # download results
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model_metrics.txt results/")
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/best_model_prediction* results/")
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/last_model_prediction* results/")
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model/* results/model/")
+if(!dir.exists(paste0("results/", JOBID))) {
+  dir.create(paste0("results/", JOBID))
+  dir.create(paste0("results/", JOBID, "/model"))
+  }
+system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model_metrics.txt results/5553743-1/")
+system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_prediction_rank* results/5553743-1/")
+system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_*.h5 results/5553743-1/model/")
 
-metrics = read.table("results/model_metrics.txt",
+metrics = read.table("results/5553743-1/model_metrics.txt",
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/last_model_prediction_rank0.csv",
+prediction = read.csv("results/5553743-1/best_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results",
-                   pattern = "last_model_prediction_rank",
+preds = list.files("results/5553743-1",
+                   pattern = "best_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
@@ -46,7 +49,7 @@ pb = txtProgressBar(min = 0 , max = length(preds), style = 3)
 for (p in 1:length(preds)) {
   setTxtProgressBar(pb, p)
   
-  rank = str_split(preds[p], "[:punct:]", simplify = T)[, 5]
+  rank = str_split(preds[p], "[:punct:]", simplify = T)[, 7]
   rank = str_sub(rank, start = 5, end = nchar(rank)) %>% as.character %>% as.numeric()
   
   cnt_pred = read.csv(preds[p], stringsAsFactors = F)
@@ -60,8 +63,8 @@ for (p in 1:length(preds)) {
   pred_counts = pred_counts + (cnt_pred$pred_count * 1/length(preds))
 }
 
-prediction$pred_count = pred_counts
-# prediction$pred_count = pred_counts_onehot
+# prediction$pred_count = pred_counts
+prediction$pred_count = pred_counts_onehot
 # prediction$pred_count = pred_counts_aaindex
 
 count = prediction$count
@@ -246,8 +249,8 @@ pairwise.dist = read.csv("results/pairwise_ks-statistics_test100-sample.csv", st
 # clustering
 km.results = kmeans(pairwise.dist, centers = 4, iter.max = 20, nstart = 4)
 cluster = km.results$cluster %>% as.numeric() %>% as.data.frame()
-cluster$Accession = names(pairwise.dist) %>% str_replace_all(pattern = coll("."),
-                                                             replacement = coll("-"))
+cluster$Accession = prots
+  
 names(cluster)[1] = "n_cluster"
 prediction.cl = left_join(prediction, cluster) %>% na.omit()
 
@@ -534,3 +537,9 @@ ggsave(paste0("results/plots/", JOBID, "_ROC.png"),
 ggsave(paste0("results/plots/", JOBID, "_PR.png"),
        pr.curve, device = "png", dpi = "retina")
 
+
+######### just to be sure ... ###########
+train = fread("data/windowTokens_training100-sample.csv") %>% as.data.frame()
+train.acc = str_split_fixed(train$Accession, coll("-"), Inf)[, 1] %>% unique()
+pred.acc = str_split_fixed(prediction$Accession, coll("-"), Inf)[, 1] %>% unique()
+intersect(train.acc, pred.acc)

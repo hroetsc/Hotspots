@@ -54,10 +54,9 @@ testSize = 0.1
 accU_noisoforms = str_split_fixed(accU, coll("-"), Inf)[, 1] %>% unique()
 
 n_train = ceiling(length(accU_noisoforms) * (1-testSize))
-n_test = floor(length(accU_noisoforms) * testSize)
 
 training.acc = accU_noisoforms[sample(length(accU_noisoforms), n_train)]
-testing.acc = accU_noisoforms[sample(length(accU_noisoforms), n_test)]
+testing.acc = accU_noisoforms[-which(accU_noisoforms %in% training.acc)]
 
 
 #### clean data

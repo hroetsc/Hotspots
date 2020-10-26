@@ -30,9 +30,12 @@ overview = data.frame(Accession = prots,
                       R_sq = rep(NA, length(prots)),
                       PCC = rep(NA, length(prots)),
                       len_protein = rep(NA, length(prots)),
-                      max_count = rep(NA, length(prots)),
-                      min_count = rep(NA, length(prots)),
-                      average_count = rep(NA, length(prots)))
+                      true_max_count = rep(NA, length(prots)),
+                      true_min_count = rep(NA, length(prots)),
+                      true_average_count = rep(NA, length(prots)),
+                      pred_max_count = rep(NA, length(prots)),
+                      pred_min_count = rep(NA, length(prots)),
+                      pred_average_count = rep(NA, length(prots)))
 
 pb = txtProgressBar(min = 0, max = nrow(overview), style = 3)
 for (i in 1:nrow(overview)) {
@@ -45,9 +48,14 @@ for (i in 1:nrow(overview)) {
   overview$PCC[i] = cor(cnt$count, cnt$pred_count, method = "pearson")
   overview$R_sq[i] = summary(cnt.lm)$r.squared
   overview$len_protein[i] = nchar(hp$seqs[hp$Accession == overview$Accession[i]])
-  overview$max_count[i] = max(cnt$count)
-  overview$min_count[i] = min(cnt$count)
-  overview$average_count[i] = cnt$count %>% mean()
+  
+  overview$true_max_count[i] = max(cnt$count)
+  overview$true_min_count[i] = min(cnt$count)
+  overview$true_average_count[i] = cnt$count %>% mean()
+  
+  overview$pred_max_count[i] = max(cnt$pred_count)
+  overview$pred_min_count[i] = min(cnt$pred_count)
+  overview$pred_average_count[i] = cnt$pred_count %>% mean()
   
 }
 write.csv(overview, "results/overview.csv", row.names = F)
@@ -170,10 +178,10 @@ ggsave("results/scatterplot_H-bonding.png", plot = last_plot(),
 
 
 ########## characterise outliers ##########
-high.counts.bad = overview[overview$average_count > 1 & overview$PCC < .5, ]
+high.counts.bad = overview[overview$average_count > 1 & overview$PCC < .3, ]
 write.csv(high.counts.bad, "results/badly_predicted_high_counts.csv", row.names = F)
 
-high.counts.well = overview[overview$average_count > 1 & overview$PCC > .8, ]
+high.counts.well = overview[overview$average_count > 1 & overview$PCC > .7, ]
 write.csv(high.counts.well, "results/well_predicted_high_counts.csv", row.names = F)
 
 
