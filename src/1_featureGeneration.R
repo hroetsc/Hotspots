@@ -85,8 +85,8 @@ get_windows_counts = function(extension = "", outfile = ""){
     cnt.AA$aa = as.character(cnt.AA$aa)
     cnt.AA$idx = seq(1, nrow(cnt.AA)) %>% as.numeric()
     
-    # apply sliding window and check which tokens are in current window
-    # store all window tokens for current protein
+    # apply sliding window and check which amino acids are in current window
+    # store all window amino acids   for current protein
     if (nrow(cnt.AA) > 25 ){
       wnd.Tokens = data.frame(Accession = rep(cnt.Prot$Accession, nrow(cnt.AA) - window_size + 1),
                               window = rep(NA, nrow(cnt.AA) - window_size + 1),

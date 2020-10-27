@@ -2,7 +2,7 @@
 # HOTSPOT PREDICTION
 # description: fit neural network to predict hotspot density along the human proteome
 # input: table with amino acids in sliding windows and scores, window matrices
-# output: model, metrics
+# output: model, metrics, predictions
 # author: HR
 
 import os
@@ -42,7 +42,7 @@ epochs = 300
 pseudocounts = 1
 no_cycles = int(epochs / 10)
 
-batch_size = 128
+batch_size = 256
 max_lr = 0.01
 starting_filter = 16
 kernel_size = 3
