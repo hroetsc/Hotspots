@@ -2,7 +2,7 @@
 # HOTSPOT PREDICTION
 # description: fit neural network to predict hotspot density along the human proteome
 # input: table with amino acids in sliding windows and scores, window matrices
-# output: model, metrics
+# output: model, metrics, predictions
 # author: HR
 
 import os
@@ -37,13 +37,14 @@ if gpus:
 print('HYPERPARAMETERS')
 embeddingDim = 20
 windowSize = 25
+sgt_dim = 400
 
-epochs = 200
+epochs = 300
 pseudocounts = 1
 no_cycles = int(epochs / 10)
 
-batch_size = 128
-max_lr = 0.001
+batch_size = 256
+max_lr = 0.01
 starting_filter = 16
 kernel_size = 3
 block_size = 5
@@ -63,41 +64,41 @@ print("-------------------------------------------------------------------------
 best_model_path = '/scratch2/hroetsc/Hotspots/results/model/best_model_rank{}.h5'.format(hvd.rank())
 last_model_path = '/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5'.format(hvd.rank())
 
-if os.path.exists(best_model_path):
-    os.remove(best_model_path)
-
-if os.path.exists(last_model_path):
-    os.remove(last_model_path)
-
 print('#####')
 print('ONE HOT AND AA INDEX ON DIFFERENT RANKS')
 print('no extension')
 print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
+# enc = 'oneHOT'
 
-tokens, counts, emb, dist = open_and_format_matrices(group='train', encoding=enc,
-                                                     spec='50',
-                                                     extension='',
-                                                     windowSize=windowSize, embeddingDim=embeddingDim,
-                                                     relative_dist=False,
-                                                     protein_norm=True,
-                                                     log_counts=True)
-tokens_test, counts_test, emb_test, dist_test = open_and_format_matrices(group='test', encoding=enc,
-                                                                         spec='50',
-                                                                         extension='',
-                                                                         windowSize=windowSize,
-                                                                         embeddingDim=embeddingDim,
-                                                                         relative_dist=False,
-                                                                         protein_norm=True,
-                                                                         log_counts=True)
+tokens, counts, emb, dist, wholeSeq = open_and_format_matrices(group='train',
+                                                               encoding=enc,
+                                                               spec='_25aa_100-sample',
+                                                               extension='',
+                                                               windowSize=windowSize,
+                                                               embeddingDim=embeddingDim,
+                                                               sgt_dim=sgt_dim,
+                                                               relative_dist=False,
+                                                               protein_norm=False,
+                                                               log_counts=True)
+tokens_test, counts_test, emb_test, dist_test, wholeSeq_test = open_and_format_matrices(group='test',
+                                                                                        encoding=enc,
+                                                                                        spec='_25aa_100-sample',
+                                                                                        extension='',
+                                                                                        windowSize=windowSize,
+                                                                                        embeddingDim=embeddingDim,
+                                                                                        sgt_dim=sgt_dim,
+                                                                                        relative_dist=False,
+                                                                                        protein_norm=False,
+                                                                                        log_counts=True)
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
 
 
 ### MAIN PART ###
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
-                            include_distance=False):
+                            include_distance=False, whole_seq=False):
     num_blocks_list = [block_size] * num_blocks
     dilation_rate_list = [1] * num_blocks
 
@@ -152,6 +153,8 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                       name='input_window')
     dist = keras.Input(shape=(2),
                        name='distance')
+    sgt = keras.Input(shape=(sgt_dim),
+                      name='whole_sequence_embedding')
 
     ## convolutional layers (ResNet)
     tf.print('residual blocks')
@@ -200,8 +203,16 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                                 padding='same')(t)
     flat = layers.Flatten()(t)
 
+    # concatenate with distance
     if include_distance:
         flat = layers.Concatenate()([flat, dist])
+
+    # add whole sequence embedding
+    if whole_seq:
+        sgt_dense = dense_layer(sgt, nodes=256)
+        sgt_dense = dense_layer(sgt_dense, nodes=64)
+
+        flat = layers.Concatenate()([flat, sgt_dense])
 
     ## dense layers
     tf.print('dense layers')
@@ -216,7 +227,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                        name='output')(out_norm)
 
     ## concatenate to model
-    model = keras.Model(inputs=[inp, dist], outputs=out)
+    model = keras.Model(inputs=[inp, dist, sgt], outputs=out)
 
     ## compile model
     tf.print('compile model')
@@ -249,7 +260,11 @@ print('MODEL TRAINING')
 # define callbacks
 callbacks = [RestoreBestModel(last_model_path),
              CosineAnnealing(no_cycles=no_cycles, no_epochs=epochs, max_lr=max_lr),
-             hvd.callbacks.BroadcastGlobalVariablesCallback(0)]
+             hvd.callbacks.BroadcastGlobalVariablesCallback(0),
+             keras.callbacks.ModelCheckpoint(filepath=last_model_path,
+                                             verbose=1,
+                                             monitor='val_loss',
+                                             save_freq='epoch')]
 
 # define number of steps - make sure that no. of steps is the same for all ranks!
 # otherwise, stalled ranks problem might occur
@@ -263,7 +278,7 @@ val_steps = int(np.ceil(val_steps / hvd.size()))
 ## fit model
 model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
                                 block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
-                                include_distance=True)
+                                include_distance=True, whole_seq=False)
 
 # print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
 # model = keras.models.load_model(last_model_path)
@@ -273,10 +288,10 @@ if hvd.rank() == 0:
     model.summary()
     print('train for {}, validate for {} steps per epoch'.format(steps, val_steps))
 
-fit = model.fit(x=[emb, dist],
+fit = model.fit(x=[emb, dist, wholeSeq],
                 y=counts,
                 batch_size=batch_size,
-                validation_data=([emb_test, dist_test], counts_test),
+                validation_data=([emb_test, dist_test, wholeSeq_test], counts_test),
                 validation_batch_size=batch_size,
                 steps_per_epoch=steps,
                 validation_steps=val_steps,
@@ -289,7 +304,7 @@ fit = model.fit(x=[emb, dist],
 
 ### OUTPUT ###
 print('SAVE MODEL AND METRICS')
-save_training_res(model, fit, last_model_path)
+save_training_res(model, fit, best_model_path)
 
 ########## part 2: make prediction ##########
 
@@ -330,4 +345,3 @@ make_prediction(model=best_model, outname='best_model')
 make_prediction(model=last_model, outname='last_model')
 
 tf.keras.backend.clear_session()
-

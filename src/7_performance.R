@@ -15,7 +15,7 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5553743-1-onehot-nolog"
+JOBID = "5574684-1-nolog"
 
 
 ### INPUT ###
@@ -23,21 +23,21 @@ JOBID = "5553743-1-onehot-nolog"
 if(!dir.exists(paste0("results/", JOBID))) {
   dir.create(paste0("results/", JOBID))
   dir.create(paste0("results/", JOBID, "/model"))
-  }
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model_metrics.txt results/5553743-1/")
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_prediction_rank* results/5553743-1/")
-system("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_*.h5 results/5553743-1/model/")
+}
+system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model_metrics.txt results/", JOBID, "/"))
+system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_prediction_rank* results/", JOBID, "/"))
+system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_*.h5 results/", JOBID, "/model/"))
 
-metrics = read.table("results/5553743-1/model_metrics.txt",
+metrics = read.table(paste0("results/", JOBID, "/model_metrics.txt"),
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5553743-1/best_model_prediction_rank0.csv",
+prediction = read.csv("results/5574684-1/best_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5553743-1",
+preds = list.files("results/5574684-1",
                    pattern = "best_model_prediction_rank",
                    full.names = T)
 
@@ -63,8 +63,8 @@ for (p in 1:length(preds)) {
   pred_counts = pred_counts + (cnt_pred$pred_count * 1/length(preds))
 }
 
-# prediction$pred_count = pred_counts
-prediction$pred_count = pred_counts_onehot
+prediction$pred_count = pred_counts
+# prediction$pred_count = pred_counts_onehot
 # prediction$pred_count = pred_counts_aaindex
 
 count = prediction$count
@@ -216,6 +216,7 @@ if(file.exists(out)) {
 }
 
 
+
 ########## cluster proteins ##########
 # prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
 # prediction$pred_count = pred_counts
@@ -283,7 +284,7 @@ for (c in cl){
 ########## map peptides to protein sequence ##########
 window_size = 25
 
-prots = read.csv("/media/hanna/Hanna2/DATA/Hotspots/DATA/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
+prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
 prots = prots[which(prots$Accession %in% prediction$Accession), ]
 # prots = left_join(prots, cluster)
 
@@ -539,6 +540,7 @@ ggsave(paste0("results/plots/", JOBID, "_PR.png"),
 
 
 ######### just to be sure ... ###########
+
 train = fread("data/windowTokens_training100-sample.csv") %>% as.data.frame()
 train.acc = str_split_fixed(train$Accession, coll("-"), Inf)[, 1] %>% unique()
 pred.acc = str_split_fixed(prediction$Accession, coll("-"), Inf)[, 1] %>% unique()

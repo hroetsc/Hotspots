@@ -11,7 +11,7 @@ library(stringr)
 library(data.table)
 
 ### INPUT ###
-windowTokens = fread("data/windowTokens.csv") %>%
+windowTokens = fread("data/windowTokens25aa.csv") %>%
   as.data.frame()
 accU = windowTokens$Accession %>% unique()
 
@@ -29,22 +29,6 @@ length(zero) / length(counts)
 plot(density(counts[-zero]))
 # lines(density(2^counts[-zero] - 1), type = 'l', col = 'red')
 summary(counts[-zero])
-
-
-### remove windows with X, replace U by C
-X_idx = str_detect(windowTokens$window, "X")
-X_idx[X_idx] %>% length()
-windowTokens = windowTokens[X_idx == F, ]
-
-U_idx = str_detect(windowTokens$window, "U")
-U_idx[U_idx] %>% length()
-windowTokens_U = windowTokens[U_idx, ]
-
-for (i in 1:nrow(windowTokens_U)) {
-  windowTokens_U$window[i] = str_replace_all(windowTokens_U$window[i], pattern = "U", replacement = "C") 
-}
-
-windowTokens[U_idx, ] = windowTokens_U
 
 
 ### sample
@@ -94,85 +78,42 @@ average$average_counts[c(low_counts, high_counts)] %>% as.character() %>% as.num
 
 training = training[keep, ]
 
-# do not execute bc positions as additional feature
-# remove sliding windows that occur in training data set from testing data set
-# intersect(training.tmp$window, testing$window) %>% length()
-# rm = which(testing$window %in% training.tmp$window)
-# if (length(rm) > 0){ testing.tmp = testing[-rm, ] }
 
-
-# downsample
-# training.5per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.05)), ]
-# testing.5per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.05)), ]
-# 
-# training.20per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.2)), ]
-# testing.20per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.2)), ]
-# 
-# training.50per = training[training$Accession %in% sample(training.acc, ceiling(length(training.acc)*0.5)), ]
-# testing.50per = testing[testing$Accession %in% sample(testing.acc, ceiling(length(testing.acc)*0.5)), ]
+# save IDs of proteins in train/test data
+train_IDs = training$Accession %>% unique()
+test_IDs = testing$Accession %>% unique()
 
 
 ### OUTPUT ###
 write.csv(training,
-          "/media/hanna/Hanna2/DATA/Hotspots/DATA/windowTokens_training100-sample.csv",
+          "data/windowTokens_training_25aa_100-sample.csv",
           row.names = F)
 write.csv(testing,
-          "/media/hanna/Hanna2/DATA/Hotspots/DATA/windowTokens_testing100-sample.csv",
+          "data/windowTokens_testing_25aa_100-sample.csv",
           row.names = F)
 
-# write.csv(training.5per, "data/windowTokens_training05.csv", row.names = F)
-# write.csv(testing.5per, "data/windowTokens_testing05.csv", row.names = F)
-# 
-# write.csv(training.20per, "data/windowTokens_training20.csv", row.names = F)
-# write.csv(testing.20per, "data/windowTokens_testing20.csv", row.names = F)
-# 
-# write.csv(training.50per, "data/windowTokens_training50.csv", row.names = F)
-# write.csv(testing.50per, "data/windowTokens_testing50.csv", row.names = F)
+write.csv(train_IDs, "data/IDs_train100-sample.csv", row.names = F)
+write.csv(test_IDs, "data/IDs_test100-sample.csv", row.names = F)
 
 
-#### get the second half of the data
-training = read.csv("data/windowTokens_training.csv", stringsAsFactors = F)
-testing = read.csv("data/windowTokens_testing.csv", stringsAsFactors = F)
+### get same proteins for different window sizes ###
+windows_10aa = fread("data/windowTokens10aa.csv") %>%
+  as.data.frame()
 
-training.50per = read.csv("data/windowTokens_training50.csv", stringsAsFactors = F)
-testing.50per = read.csv("data/windowTokens_testing50.csv", stringsAsFactors = F)
+train_10aa = windows_10aa[windows_10aa$Accession %in% train_IDs, ]
+test_10aa = windows_10aa[windows_10aa$Accession %in% test_IDs, ]
 
-training.50per.2 = training[!training$Accession %in% training.50per$Accession, ]
-testing.50per.2 = testing[!testing$Accession %in% testing.50per$Accession, ]
-
-nrow(training.50per) + nrow(training.50per.2) == nrow(training)
-nrow(testing.50per) + nrow(testing.50per.2) == nrow(testing)
-
-write.csv(training.50per.2, "data/windowTokens_training50-2.csv", row.names = F)
-write.csv(testing.50per.2, "data/windowTokens_testing50-2.csv", row.names = F)
+write.csv(train_10aa, "data/windowTokens_training_10aa_100-sample.csv", row.names = F)
+write.csv(test_10aa, "data/windowTokens_testing_10aa_100-sample.csv", row.names = F)
 
 
 
-#### for comparison of different extensions:
-# get the same training/testing data sets as in df w/o extension
-# to avoid re-calculation of all the windows
+windows_50aa = fread("data/windowTokens50aa.csv") %>%
+  as.data.frame()
 
-training.50per = read.csv("data/windowTokens_training50.csv", stringsAsFactors = F)
-testing.50per = read.csv("data/windowTokens_testing50.csv", stringsAsFactors = F)
+train_50aa = windows_50aa[windows_50aa$Accession %in% train_IDs, ]
+test_50aa = windows_50aa[windows_50aa$Accession %in% test_IDs, ]
 
-window = read.csv("data/windowTokens_norm.csv", stringsAsFactors = F)
-
-get_same_data = function(df = "", window = ""){
-  
-  window_sub = window[which(window$Accession %in% df$Accession), ]
-  out = window_sub[order(window_sub$window %in% df$window), ]
-  out = out[order(out$Accession %in% window_sub$Accession), ]
-  
-  if (length(which(out$window != df$window)) > 0) {
-    print("ELEMENTS DO NOT MATCH !!!")
-  }
-  
-  return(out)
-}
-
-training = get_same_data(df = training.50per, window = window)
-testing = get_same_data(df = testing.50per, window = window)
-
-write.csv(training, "data/windowTokens_norm_training50.csv", row.names = F)
-write.csv(testing, "data/windowTokens_norm_testing50.csv", row.names = F)
+write.csv(train_50aa, "data/windowTokens_training_50aa_100-sample.csv", row.names = F)
+write.csv(test_50aa, "data/windowTokens_testing_50aa_100-sample.csv", row.names = F)
 

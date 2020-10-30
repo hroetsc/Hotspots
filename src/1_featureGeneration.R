@@ -16,7 +16,7 @@ registerDoParallel(availableCores())
 
 
 window_size = 25
-ext = 5
+ext = 5  # extension, if used
 
 
 ### INPUT ###
@@ -47,29 +47,24 @@ length(rm)
 windowCounts = windowCounts[-rm]
 
 
-# peptide density: sum of all counts / protein length
-# pep_dens = rep(NA, length(windowCounts))
-# 
-# pdf("results/peptide_density.pdf", width = 12, height = 8)
-# par(mfrow = c(2,2))
-# for (w in 1:length(windowCounts)){
-#   pep_dens[w] = (sum(windowCounts[[w]]) / (length(windowCounts[[w]])^2)) * length(which(windowCounts[[w]] > 0))
-#   plot(windowCounts[[w]], type = "l",
-#        xlab = "position",
-#        ylab = "count",
-#        main = names(windowCounts)[w])
-#   abline(h = pep_dens[w], col = "red")
-# }
-# dev.off()
-# 
-# hist(log10(pep_dens))
-# cutoff = 0.25
-# keep = which(pep_dens > cutoff)
-# windowCounts = windowCounts[keep]
-
-
 # keep only proteins with hotspots
 prots = prots[which(prots$Accession %in% names(windowCounts)), ]
+# remove proteins with X
+X_idx = str_detect(prots$seqs, "X")
+X_idx[X_idx] %>% length()
+prots = prots[X_idx == F, ]
+
+# replace U by C
+U_idx = str_detect(prots$seqs, "U")
+U_idx[U_idx] %>% length()
+prots_U = prots[U_idx, ]
+
+for (i in 1:nrow(prots_U)) {
+  prots_U$seqs[i] = str_replace_all(prots_U$seqs[i], pattern = "U", replacement = "C") 
+}
+
+prots[U_idx, ] = prots_U
+
 
 # get windows and average counts per window
 get_windows_counts = function(extension = "", outfile = ""){
@@ -87,7 +82,7 @@ get_windows_counts = function(extension = "", outfile = ""){
     
     # apply sliding window and check which amino acids are in current window
     # store all window amino acids   for current protein
-    if (nrow(cnt.AA) > 25 ){
+    if (nrow(cnt.AA) > window_size ){
       wnd.Tokens = data.frame(Accession = rep(cnt.Prot$Accession, nrow(cnt.AA) - window_size + 1),
                               window = rep(NA, nrow(cnt.AA) - window_size + 1),
                               counts = rep(NA, nrow(cnt.AA) - window_size + 1),
@@ -172,27 +167,9 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 # apply
 get_windows_counts(extension = "none",
-                   outfile = "data/windowTokens")
-# get_windows_counts(extension = "N", outfile = "data/Next_windowTokens")
-# get_windows_counts(extension = "C", outfile = "data/Cext_windowTokens")
-# get_windows_counts(extension = "NandC", outfile = "data/NandCext_windowTokens")
-
+                   outfile = "data/windowTokens25aa")
 
 # save proteins with hotspots
-X_idx = str_detect(prots$seqs, "X")
-X_idx[X_idx] %>% length()
-prots = prots[X_idx == F, ]
-
-U_idx = str_detect(prots$seqs, "U")
-U_idx[U_idx] %>% length()
-prots_U = prots[U_idx, ]
-
-for (i in 1:nrow(prots_U)) {
-  prots_U$seqs[i] = str_replace_all(prots_U$seqs[i], pattern = "U", replacement = "C") 
-}
-
-prots[U_idx, ] = prots_U
-
-write.csv(prots, "/media/hanna/Hanna2/DATA/Hotspots/DATA/proteins_w_hotspots.csv", row.names = F)
+write.csv(prots, "data/proteins_w_hotspots.csv", row.names = F)
 
 

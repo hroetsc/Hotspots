@@ -50,7 +50,7 @@ def print_initialization():
 # DATA FORMATTING
 ########################################################################################################################
 def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_norm=False, log_counts=False):
-    tokens = np.array(tokensAndCounts.loc[:, ['Accession', 'window']], dtype='object')
+    tokens = np.array(tokensAndCounts[['Accession', 'window']])
 
     dist_N = np.array(tokensAndCounts['dist_N'], dtype='int32')
     dist_C = np.array(tokensAndCounts['dist_C'], dtype='int32')
@@ -83,69 +83,82 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_nor
     return tokens, counts, dist
 
 
-def open_and_format_matrices(group, encoding, spec, extension, windowSize, embeddingDim,
-                             relative_dist, protein_norm, log_counts, pseudocounts=1):
+def open_and_format_matrices(group, encoding, spec, extension,
+                             windowSize, embeddingDim, sgt_dim,
+                             relative_dist, protein_norm, log_counts,
+                             pseudocounts=1):
     print(group)
     print(encoding)
     print(spec)
     print(extension)
 
+    # accession, windows and counts
     tokensAndCounts = pd.read_csv(str('/scratch2/hroetsc/Hotspots/data/'+extension+'windowTokens_'+ group + 'ing' + spec + '.csv'))
-    tokens, counts, dist = format_input(tokensAndCounts, pseudocounts,
+    tokens, counts, dist = format_input(tokensAndCounts,
+                                        pseudocounts,
                                         relative_dist=relative_dist,
                                         protein_norm=protein_norm,
                                         log_counts=log_counts)
 
+
+    # get embeddings
     emb_path = str('/scratch2/hroetsc/Hotspots/data/EMBEDDING_' + encoding + '_'+group+spec+'.dat')
     acc_path = str('/scratch2/hroetsc/Hotspots/data/ACCESSIONS_' + encoding + '_'+group+spec+'.dat')
+    whole_seq_path = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_'+group+spec+'.dat')
+    whole_seq_ids = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_ID_' + group + spec + '.dat')
 
     no_elements = int(windowSize * embeddingDim)
-    chunk_size = int(no_elements * 4)
 
     embMatrix = [None] * tokens.shape[0]
     accMatrix = [None] * tokens.shape[0]
-    chunk_pos = 0
+    wholeSeq = [None] * tokens.shape[0]
+    wholeSeq_IDs = [None] * tokens.shape[0]
 
     # open weights and accessions binary file
-    with open(emb_path, 'rb') as emin, open(acc_path, 'rb') as ain:
+    with open(emb_path, 'rb') as emin, open(acc_path, 'rb') as ain,\
+            open(whole_seq_path, 'rb') as win, open(whole_seq_ids, 'rb') as win_id:
         # loop over files to get elements
         for b in range(tokens.shape[0]):
-            emin.seek(chunk_pos, 0)
+            # window embeddings
+            emin.seek(int(b*4*no_elements), 0)
             dt = np.fromfile(emin, dtype='float32', count=no_elements)
-
-            # get current accession (index)
-            ain.seek(int(b * 4), 0)
-            cnt_acc = int(np.fromfile(ain, dtype='int32', count=1))
-            accMatrix[b] = cnt_acc
-
             # make sure to pass 4D-Tensor to model: (batchSize, depth, height, width)
             dt = dt.reshape((windowSize, embeddingDim))
             # for 2D convolution --> 4D input:
             embMatrix[b] = np.expand_dims(dt, axis=0)
 
-            # increment chunk position
-            chunk_pos += chunk_size
+            # get current accession (index)
+            ain.seek(int(b * 4), 0)
+            accMatrix[b] = int(np.fromfile(ain, dtype='int32', count=1))
+
+            # get whole sequence embedding
+            win.seek(int(b*4*sgt_dim), 0)
+            cnt_ws = np.fromfile(win, dtype='float32', count=sgt_dim)
+            wholeSeq[b] = cnt_ws
+
+            # get ID of sequence
+            win_id.seek(int(b * 4), 0)
+            wholeSeq_IDs[b] = int(np.fromfile(win_id, dtype='int32', count=1))
 
         emin.close()
         ain.close()
 
-    # order tokens and count according to order in embedding matrix
+    # np arrays
     accMatrix = np.array(accMatrix, dtype='int32')
     embMatrix = np.array(embMatrix, dtype='float32')
+    wholeSeq_IDs = np.array(wholeSeq_IDs, dtype='int32')
+    wholeSeq = np.array(wholeSeq, dtype='float32')
 
-    tokens = tokens[accMatrix, :]
-    counts = counts[accMatrix]
-    dist = dist[accMatrix]
+    # order all data frames according to occurrence in windowTokens
+    # (information kept in ids)
+    embMatrix = embMatrix[np.argsort(accMatrix), :, :, :]
+    wholeSeq = wholeSeq[np.argsort(wholeSeq_IDs), :]
 
-    sort = np.argsort(accMatrix)  # sort to be able to concatenate multiple matrices
-    tokens = tokens[sort, :]
-    counts = counts[sort]
-    dist = dist[sort]
-    embMatrix = embMatrix[sort, :, :, :]
+    # should be in the same order as tokens, counts and distance
 
     print(counts[:10])
 
-    return tokens, counts, embMatrix, dist
+    return tokens, counts, embMatrix, dist, wholeSeq
 
 
 ########################################################################################################################
