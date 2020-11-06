@@ -32,27 +32,43 @@ summary(counts[-zero])
 
 
 ### sample
-testSize = 0.1
+testSize = 0.05
+n_test = ceiling(length(accU) * testSize)
 
-# no isoforms of training data in testing data (and vice versa!)
-accU_noisoforms = str_split_fixed(accU, coll("-"), Inf)[, 1] %>% unique()
-
-n_train = ceiling(length(accU_noisoforms) * (1-testSize))
-
-training.acc = accU_noisoforms[sample(length(accU_noisoforms), n_train)]
-testing.acc = accU_noisoforms[-which(accU_noisoforms %in% training.acc)]
+testing.acc = accU[sample(length(accU), n_test)]
+training.acc = accU[-which(accU %in% testing.acc)]
 
 
 #### clean data
+# no isoforms of training data in testing data (and vice versa!)
+# make sure that all duplicated windows end up in one group
+train.preliminary = windowTokens[windowTokens$Accession %in% training.acc, ]
+test.preliminary = windowTokens[windowTokens$Accession %in% testing.acc, ]
+
+pb = txtProgressBar(min = 0, max = length(testing.acc), style = 3)
+for (t in 1:length(testing.acc)){
+  setTxtProgressBar(pb, t)
+  
+  cnt = test.preliminary[test.preliminary$Accession == testing.acc[t], ]
+  k = which(train.preliminary$window %in% cnt$window)
+  
+  if (length(k) > 0) {
+    cnt.training.acc = unique(train.preliminary$Accession[k])
+    testing.acc = c(testing.acc,
+                    cnt.training.acc)
+    training.acc[training.acc == cnt.training.acc] = NA
+  }
+}
+
+testing.acc = unique(testing.acc)
+training.acc = na.omit(training.acc) %>% unique()
+
 # split data sets
-train_idx = which(str_split_fixed(windowTokens$Accession, coll("-"), Inf)[, 1] %>%
-                    as.character() %in% training.acc)
-training = windowTokens[train_idx, ]
+training = windowTokens[windowTokens$Accession %in% training.acc, ]
+testing = windowTokens[windowTokens$Accession %in% testing.acc, ]
 
-test_idx = which(str_split_fixed(windowTokens$Accession, coll("-"), Inf)[, 1] %>%
-                    as.character() %in% testing.acc)
-testing = windowTokens[test_idx, ]
-
+# check!
+intersect(training$window, testing$window) %>% length()
 
 # sample training data based on average count per protein
 trainCounts = windowCounts[names(windowCounts) %in% training$Accession]

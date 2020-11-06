@@ -15,7 +15,7 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5574684-1-nolog"
+JOBID = "5636045-2-last-nolog"
 
 
 ### INPUT ###
@@ -24,21 +24,22 @@ if(!dir.exists(paste0("results/", JOBID))) {
   dir.create(paste0("results/", JOBID))
   dir.create(paste0("results/", JOBID, "/model"))
 }
+
 system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/model_metrics.txt results/", JOBID, "/"))
 system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_prediction_rank* results/", JOBID, "/"))
 system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/results/*_model_*.h5 results/", JOBID, "/model/"))
 
 metrics = read.table(paste0("results/", JOBID, "/model_metrics.txt"),
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5574684-1/best_model_prediction_rank0.csv",
+prediction = read.csv("results/5636045-2/last_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5574684-1",
-                   pattern = "best_model_prediction_rank",
+preds = list.files("results/5636045-2",
+                   pattern = "last_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
@@ -282,7 +283,7 @@ for (c in cl){
 
 
 ########## map peptides to protein sequence ##########
-window_size = 25
+window_size = 50
 
 prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
 prots = prots[which(prots$Accession %in% prediction$Accession), ]
@@ -417,8 +418,10 @@ pred.lm = lm(pred_count ~ count, data = prediction.roll)
 
 ggplot(prediction.roll, aes(x = count, y = pred_count)) +
   geom_point(alpha = 0.1, size = 0.1) +
-  xlim(c(start, stop)) +
-  ylim(c(start, stop)) +
+  xlim(c(min(prediction.roll$count, prediction.roll$pred_count),
+         max(prediction.roll$count, prediction.roll$pred_count))) +
+  ylim(c(min(prediction.roll$count, prediction.roll$pred_count),
+         max(prediction.roll$count, prediction.roll$pred_count))) +
   geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
   coord_equal() +
   ggtitle("true and predicted hotspot counts",
@@ -429,7 +432,7 @@ ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean.png"),
 
 
 ########## binarize counts ##########
-prediction.binary = prediction
+prediction.binary = prediction.roll
 prediction.binary$count[prediction.binary$count > 0] = 1
 
 

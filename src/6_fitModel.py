@@ -35,8 +35,11 @@ if gpus:
 
 ### HYPERPARAMETERS ###
 print('HYPERPARAMETERS')
+
+spec = '_50aa_100-sample'
+
+windowSize = 50
 embeddingDim = 20
-windowSize = 25
 sgt_dim = 400
 
 epochs = 300
@@ -44,7 +47,7 @@ pseudocounts = 1
 no_cycles = int(epochs / 10)
 
 batch_size = 256
-max_lr = 0.01
+max_lr = 0.001
 starting_filter = 16
 kernel_size = 3
 block_size = 5
@@ -66,6 +69,7 @@ last_model_path = '/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5
 
 print('#####')
 print('ONE HOT AND AA INDEX ON DIFFERENT RANKS')
+# print('ONE HOT ONLY')
 print('no extension')
 print('#####')
 
@@ -74,7 +78,7 @@ enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
 
 tokens, counts, emb, dist, wholeSeq = open_and_format_matrices(group='train',
                                                                encoding=enc,
-                                                               spec='_25aa_100-sample',
+                                                               spec=spec,
                                                                extension='',
                                                                windowSize=windowSize,
                                                                embeddingDim=embeddingDim,
@@ -84,7 +88,7 @@ tokens, counts, emb, dist, wholeSeq = open_and_format_matrices(group='train',
                                                                log_counts=True)
 tokens_test, counts_test, emb_test, dist_test, wholeSeq_test = open_and_format_matrices(group='test',
                                                                                         encoding=enc,
-                                                                                        spec='_25aa_100-sample',
+                                                                                        spec=spec,
                                                                                         extension='',
                                                                                         windowSize=windowSize,
                                                                                         embeddingDim=embeddingDim,
@@ -93,8 +97,8 @@ tokens_test, counts_test, emb_test, dist_test, wholeSeq_test = open_and_format_m
                                                                                         protein_norm=False,
                                                                                         log_counts=True)
 
-bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
-
+# bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
+bias_initializer = 0
 
 ### MAIN PART ###
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
@@ -278,7 +282,7 @@ val_steps = int(np.ceil(val_steps / hvd.size()))
 ## fit model
 model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
                                 block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
-                                include_distance=True, whole_seq=False)
+                                include_distance=True, whole_seq=True)
 
 # print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
 # model = keras.models.load_model(last_model_path)
@@ -320,7 +324,7 @@ def make_prediction(model, outname):
     if os.path.exists(outpath):
         os.remove(outpath)
 
-    pred = model.predict(x=[emb_test, dist_test],
+    pred = model.predict(x=[emb_test, dist_test, wholeSeq_test],
                          batch_size=batch_size,
                          verbose=1 if hvd.rank() == 0 else 0,
                          max_queue_size=64)

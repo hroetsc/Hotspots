@@ -13,7 +13,7 @@ import windowMatrices_helper
 
 workers = 12
 spec_short = '100-sample'
-spec_long = '_10aa_100-sample'
+spec_long = '_50aa_100-sample'
 
 
 ### INPUT ###

@@ -58,6 +58,7 @@ for (i in 1:nrow(overview)) {
   overview$pred_average_count[i] = cnt$pred_count %>% mean()
   
 }
+overview = na.omit(overview)
 write.csv(overview, "results/overview.csv", row.names = F)
 
 # histogram of protein-level PCC's
@@ -77,15 +78,15 @@ dev.off()
 # plot PCC / R^2 vs. protein features
 pdf(file = "results/performance_protein_wise.pdf", height = 12, width = 24)
 par(mfrow = c(2,3))
-plot(overview$PCC ~ overview$max_count, pch = 20, col = "red", ylim = c(0,6))
-points(overview$PCC ~ overview$min_count, pch = 20, col = "blue")
-plot(overview$PCC ~ log10(overview$average_count), pch = 20, col = "black")
+plot(overview$PCC ~ overview$true_max_count, pch = 20, col = "red", ylim = c(0,6))
+points(overview$PCC ~ overview$true_min_count, pch = 20, col = "blue")
+plot(overview$PCC ~ log10(overview$true_average_count), pch = 20, col = "black")
 plot(overview$PCC ~ log10(overview$len_protein), pch = 20, col = "black")
 
 
-plot(overview$R_sq ~ overview$max_count, pch = 20, col = "red", ylim = c(0,6))
-points(overview$R_sq ~ overview$min_count, pch = 20, col = "blue")
-plot(overview$R_sq ~ log10(overview$average_count), pch = 20, col = "black")
+plot(overview$R_sq ~ overview$true_max_count, pch = 20, col = "red", ylim = c(0,6))
+points(overview$R_sq ~ overview$true_min_count, pch = 20, col = "blue")
+plot(overview$R_sq ~ log10(overview$true_average_count), pch = 20, col = "black")
 plot(overview$R_sq ~ log10(overview$len_protein), pch = 20, col = "black")
 dev.off()
 
@@ -178,16 +179,16 @@ ggsave("results/scatterplot_H-bonding.png", plot = last_plot(),
 
 
 ########## characterise outliers ##########
-high.counts.bad = overview[overview$average_count > 1 & overview$PCC < .3, ]
+high.counts.bad = overview[overview$true_average_count > 1 & overview$PCC < .3, ]
 write.csv(high.counts.bad, "results/badly_predicted_high_counts.csv", row.names = F)
 
-high.counts.well = overview[overview$average_count > 1 & overview$PCC > .7, ]
+high.counts.well = overview[overview$true_average_count > 1 & overview$PCC > .7, ]
 write.csv(high.counts.well, "results/well_predicted_high_counts.csv", row.names = F)
 
 
 prediction.categories = prediction
 prediction.categories$color = "undefined"
-prediction.categories$color[prediction.categories$Accession %in% high.counts$Accession] = "high, bad prediction"
+prediction.categories$color[prediction.categories$Accession %in% high.counts.bad$Accession] = "high, bad prediction"
 prediction.categories$color[prediction.categories$Accession %in% high.counts.well$Accession] = "high, good prediction"
 
 ggplot(prediction.categories, aes(x = count, y = pred_count, col = color)) +
@@ -200,4 +201,4 @@ ggplot(prediction.categories, aes(x = count, y = pred_count, col = color)) +
 ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-categories.png"), plot = last_plot(),
        device = "png", dpi = "retina")
 
-
+  

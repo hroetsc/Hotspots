@@ -2,7 +2,7 @@
 # HOTSPOT PREDICTION
 # description: calculate embedding matrices for every window in train and test data set
 # input: table with amino acids in sliding windows, different encodings
-# output: big matrix files (train and test data) in binary format, whole sequence embeddings
+# output: big matrix files (train and test data) in binary format
 # author: HR
 
 import os
@@ -13,9 +13,9 @@ import windowMatrices_helper
 
 workers = 12
 embeddingDim = 20
-window_size = 10
+window_size = 50
 
-spec = '_10aa_100-sample'
+spec = '_50aa_100-sample'
 
 ### MAIN PART ###
 
