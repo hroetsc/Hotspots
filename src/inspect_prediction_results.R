@@ -27,14 +27,15 @@ source_antigens = read.csv("HOTSPOTS/DATA/mhc_ligand_table_export_1588248580.csv
                            stringsAsFactors = F, header = 2)
 hp = read.csv("/media/hanna/Hanna2/DATA/GENERAL/proteome_human.csv", stringsAsFactors = F)
 
+protExpr = fread("proteinatlas.tsv") %>% as.data.frame()
 
 ### MAIN PART ###
 ########## identify well and poorly predicted proteins ##########
 if(! dir.exists("results/exploratory")) { dir.create("results/exploratory") }
 
 # average count > 0.6 (below that not important)
-well.predicted = overview$Accession[overview$PCC > .5 & overview$true_average_count > .6] %>% as.character()
-poorly.predicted = overview$Accession[overview$PCC < .2 & overview$true_average_count > .6] %>% as.character()
+well.predicted = overview$Accession[overview$PCC > .5] %>% as.character()
+poorly.predicted = overview$Accession[overview$PCC < .2] %>% as.character()
 
 
 ########## check for overlap of windows ##########
@@ -142,4 +143,35 @@ legend("topright",
 
 
 ########## check for protein expression ##########
+
+Expr_UniProtID = protExpr$Uniprot
+Expr_tbl = protExpr[, str_detect(names(protExpr), "Tissue RNA -")]
+Rank_tbl = Expr_tbl
+
+for (c in 1:ncol(Expr_tbl)) {
+  Rank_tbl[, c] = order(Expr_tbl[, c], decreasing = F)
+}
+
+protExpr_mean = data.frame(accession = Expr_UniProtID,
+                           mean_rank = rowMeans(Rank_tbl))
+
+protExpr_mean.well = protExpr_mean$mean_rank[protExpr_mean$accession %in% 
+                                               str_split_fixed(well.predicted, coll("-"), Inf)[, 1]]
+protExpr_mean.poorly = protExpr_mean$mean_rank[protExpr_mean$accession %in% 
+                                               str_split_fixed(poorly.predicted, coll("-"), Inf)[, 1]]
+
+
+plot(density(protExpr_mean.well),
+     col = "darkgreen",
+     main = "RNA expression of proteins")
+lines(density(protExpr_mean.poorly),
+     col = "firebrick")
+legend("topright",
+       legend = c("well predicted", "poorly predicted"),
+       col = c("darkgreen", "firebrick"),
+       lty = c(1, 1),
+       cex = .6)
+
+summary(protExpr_mean.well)
+summary(protExpr_mean.poorly)
 

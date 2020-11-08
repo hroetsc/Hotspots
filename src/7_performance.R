@@ -15,7 +15,7 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5636045-2-last-nolog"
+JOBID = "5652852-1"
 
 
 ### INPUT ###
@@ -31,14 +31,14 @@ system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/resu
 
 metrics = read.table(paste0("results/", JOBID, "/model_metrics.txt"),
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5636045-2/last_model_prediction_rank0.csv",
+prediction = read.csv("results/5652852-1/last_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5636045-2",
+preds = list.files("results/5652852-1",
                    pattern = "last_model_prediction_rank",
                    full.names = T)
 
@@ -71,8 +71,8 @@ prediction$pred_count = pred_counts
 count = prediction$count
 pred_count = prediction$pred_count
 
-prediction$count = 2^(prediction$count) - 1
-prediction$pred_count = 2^(prediction$pred_count) - 1
+# prediction$count = 2^(prediction$count) - 1
+# prediction$pred_count = 2^(prediction$pred_count) - 1
 
 
 ########## training metrics ##########

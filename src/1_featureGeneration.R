@@ -15,8 +15,8 @@ library(future)
 registerDoParallel(availableCores())
 
 
-window_size = 25
-ext = 5  # extension, if used
+window_size = 75
+# ext = 5  # extension, if used
 
 
 ### INPUT ###
@@ -167,7 +167,7 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 # apply
 get_windows_counts(extension = "none",
-                   outfile = "data/windowTokens25aa")
+                   outfile = "data/windowTokens75aa")
 
 # save proteins with hotspots
 write.csv(prots, "data/proteins_w_hotspots.csv", row.names = F)
