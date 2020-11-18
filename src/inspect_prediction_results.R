@@ -16,9 +16,9 @@ library(data.table)
 
 
 ### INPUT ###
-train = fread("data/windowTokens_training_50aa_100-sample.csv") %>%
+train = fread("data/windowTokens_training_50aa.csv") %>%
   as.data.frame()
-test = fread("data/windowTokens_testing_50aa_100-sample.csv") %>%
+test = fread("data/windowTokens_testing_50aa.csv") %>%
   as.data.frame()
 
 overview = read.csv("results/overview.csv", stringsAsFactors = F)
@@ -34,52 +34,8 @@ protExpr = fread("proteinatlas.tsv") %>% as.data.frame()
 if(! dir.exists("results/exploratory")) { dir.create("results/exploratory") }
 
 # average count > 0.6 (below that not important)
-well.predicted = overview$Accession[overview$PCC > .5] %>% as.character()
-poorly.predicted = overview$Accession[overview$PCC < .2] %>% as.character()
-
-
-########## check for overlap of windows ##########
-windows_test.well = test$window[test$Accession %in% well.predicted]
-windows_test.poorly = test$window[test$Accession %in% poorly.predicted]
-
-overlap_well = which(windows_test.well %in% train$window) %>% length
-overlap_poorly = which(windows_test.poorly %in% train$window) %>% length()
-
-overlap_well / length(windows_test.well)
-overlap_poorly / length(windows_test.poorly)
-
-# just to be sure ... check for isoforms
-train.acc = str_split_fixed(train$Accession, coll("-"), Inf)[, 1] %>% unique()
-test.acc = str_split_fixed(test$Accession, coll("-"), Inf)[, 1] %>% unique()
-intersect(train.acc, test.acc) %>% length()  # phew
-
-
-# fetch some examples
-tmp = train$Accession[which(windows_test.well %in% train$window)] %>% unique()
-tmp = train$Accession[which(windows_test.well %in% train$window)] %>% unique()
-
-for (i in 1:length(windows_test.well)) {
-  k = which(windows_test.well[i] == train$window[train$window %in% windows_test.well])
-  if (length(k) > 0) {
-    print("..........")
-    print(test$Accession[test$window == windows_test.well[i]] %>% unique())
-    print(train$Accession[train$window == windows_test.well[i]] %>% unique())
-    print("..........")
-  }
-}
-
-# check how similar counts are
-counts.test = c()
-counts.train = c()
-for (i in 1:20) {
-  k = which(windows_test.well[i] == train$window[train$window %in% windows_test.well])
-  if (length(k) > 0) {
-    counts.test = c(counts.test,
-                    test$counts[test$window == windows_test.well[i]])
-    counts.train = c(counts.train,
-                     train$counts[train$window == windows_test.well[i]])
-  }
-}
+well.predicted = overview$Accession[overview$PCC > .7] %>% as.character()
+poorly.predicted = overview$Accession[overview$PCC < .1] %>% as.character()
 
 
 ########## check for overstudying ##########
@@ -163,7 +119,9 @@ protExpr_mean.poorly = protExpr_mean$mean_rank[protExpr_mean$accession %in%
 
 plot(density(protExpr_mean.well),
      col = "darkgreen",
-     main = "RNA expression of proteins")
+     main = "RNA expression of proteins",
+     xlim = c(min(protExpr_mean.well, protExpr_mean.poorly),
+              max(protExpr_mean.well, protExpr_mean.poorly)))
 lines(density(protExpr_mean.poorly),
      col = "firebrick")
 legend("topright",
@@ -174,4 +132,11 @@ legend("topright",
 
 summary(protExpr_mean.well)
 summary(protExpr_mean.poorly)
+
+######### cytoscape ########
+ensembl.well = protExpr$Ensembl[protExpr$Uniprot %in% well.predicted]
+ensembl.poorly = protExpr$Ensembl[protExpr$Uniprot %in% poorly.predicted]
+
+write.csv(ensembl.well, "results/exploratory/ensembl_well.csv", row.names = F)
+write.csv(ensembl.poorly, "results/exploratory/ensembl_poorly.csv", row.names = F)
 

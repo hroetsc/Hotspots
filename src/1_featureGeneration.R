@@ -15,13 +15,13 @@ library(future)
 registerDoParallel(availableCores())
 
 
-window_size = 75
-# ext = 5  # extension, if used
+window_size = 50
+# ext = 25  # extension, if used
 
 
 ### INPUT ###
-load("HOTSPOTS/accU.RData")
-load("HOTSPOTS/RESULTS/windowCounts.RData")
+load("data/IEDB+Sarkizova/accU.RData")
+load("data/IEDB+Sarkizova/windowCounts.RData")
 
 # human proteome
 prots = read.csv("/media/hanna/Hanna2/DATA/GENERAL/proteome_human.csv",
@@ -167,7 +167,7 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 # apply
 get_windows_counts(extension = "none",
-                   outfile = "data/windowTokens75aa")
+                   outfile = "data/windowTokens50aa")
 
 # save proteins with hotspots
 write.csv(prots, "data/proteins_w_hotspots.csv", row.names = F)

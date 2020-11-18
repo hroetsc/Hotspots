@@ -36,9 +36,10 @@ if gpus:
 ### HYPERPARAMETERS ###
 print('HYPERPARAMETERS')
 
-spec = '_50aa_100-sample'
+spec = '_25aa'
+scale_counts = True
 
-windowSize = 50
+windowSize = 25
 embeddingDim = 20
 sgt_dim = 400
 
@@ -74,35 +75,60 @@ print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
 
-tokens, counts, emb, dist, wholeSeq = open_and_format_matrices(group='train',
-                                                               encoding=enc,
-                                                               spec=spec,
-                                                               extension='',
-                                                               windowSize=windowSize,
-                                                               embeddingDim=embeddingDim,
-                                                               sgt_dim=sgt_dim,
-                                                               relative_dist=False,
-                                                               protein_norm=False,
-                                                               log_counts=False)
-tokens_test, counts_test, emb_test, dist_test, wholeSeq_test = open_and_format_matrices(group='test',
-                                                                                        encoding=enc,
-                                                                                        spec=spec,
-                                                                                        extension='',
-                                                                                        windowSize=windowSize,
-                                                                                        embeddingDim=embeddingDim,
-                                                                                        sgt_dim=sgt_dim,
-                                                                                        relative_dist=False,
-                                                                                        protein_norm=False,
-                                                                                        log_counts=False)
+tokens, counts, labels, emb, dist, wholeSeq = open_and_format_matrices(group='train',
+                                                                       encoding=enc,
+                                                                       spec=spec,
+                                                                       extension='',
+                                                                       windowSize=windowSize,
+                                                                       embeddingDim=embeddingDim,
+                                                                       sgt_dim=sgt_dim,
+                                                                       relative_dist=False,
+                                                                       protein_norm=False,
+                                                                       log_counts=True)
+tokens_test, counts_test, labels_test, emb_test, dist_test, wholeSeq_test = open_and_format_matrices(group='test',
+                                                                                                     encoding=enc,
+                                                                                                     spec=spec,
+                                                                                                     extension='',
+                                                                                                     windowSize=windowSize,
+                                                                                                     embeddingDim=embeddingDim,
+                                                                                                     sgt_dim=sgt_dim,
+                                                                                                     relative_dist=False,
+                                                                                                     protein_norm=False,
+                                                                                                     log_counts=True)
+
+
+# scale counts between 0 and 1 for regression
+def scaling(x0):
+    x1 = (x0 - np.min(x0)) / (np.max(x0) - np.min(x0))
+    return x1, np.max(x0), np.min(x0)
+
+
+def backtransformation(x1, max_x0, min_x0):
+    x0 = x1 * (max_x0 - min_x0) + min_x0
+    return x0
+
+
+if scale_counts:
+    print('scaling counts between 0 and 1')
+    counts, max_counts, min_counts = scaling(counts)
+    counts_test, max_counts_test, min_counts_test = scaling(counts_test)
+
+    print('max train count:', max_counts, ', min train count:', min_counts)
+    print('max test count:', max_counts_test, ', min test count:', min_counts_test)
 
 # bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
 bias_initializer = 0
 
+
 ### MAIN PART ###
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
-                            include_distance=False, whole_seq=False):
+                            include_distance=True, whole_seq=False,
+                            additive_noise_input=True, additive_noise_counts=True):
     num_blocks_list = [block_size] * num_blocks
     dilation_rate_list = [1] * num_blocks
+
+    noise_sd = 0.2
+    regr_activation = 'sigmoid' if scale_counts else 'linear'
 
     print(locals())
 
@@ -158,6 +184,12 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     sgt = keras.Input(shape=(sgt_dim),
                       name='whole_sequence_embedding')
 
+    # noise layer
+    if additive_noise_input:
+        inp0 = layers.GaussianNoise(stddev=noise_sd)(inp)
+    else:
+        inp0 = inp
+
     ## convolutional layers (ResNet)
     tf.print('residual blocks')
     tf.print('STRUCTURE OF RESIDUAL BLOCK: D')
@@ -169,7 +201,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     # d) full pre-activation (SpliceAI): BN-ReLU-weight-BN-ReLU-weight-addition
 
     # initial convolution
-    t = layers.BatchNormalization(trainable=True)(inp)
+    t = layers.BatchNormalization(trainable=True)(inp0)
     t = layers.Conv2D(filters=starting_filter,
                       kernel_size=kernel_size,
                       strides=2,
@@ -221,31 +253,55 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     # fully-connected layer
     dense1 = dense_layer(flat, dense_nodes)
 
-    out_norm = layers.BatchNormalization(trainable=True)(dense1)
-    out = layers.Dense(1,
-                       activation='linear',
-                       kernel_initializer=tf.keras.initializers.GlorotUniform(),
-                       bias_initializer=keras.initializers.Constant(value=bias_initializer),
-                       name='output')(out_norm)
+    # regression problem
+    regr_norm = layers.BatchNormalization(trainable=True)(dense1)
+
+    if additive_noise_counts:
+        regr_norm = layers.GaussianNoise(stddev=noise_sd)(regr_norm)
+
+    regr = layers.Dense(1,
+                        activation=regr_activation,
+                        kernel_initializer=tf.keras.initializers.GlorotUniform(),
+                        bias_initializer=keras.initializers.Constant(value=bias_initializer),
+                        name='regression')(regr_norm)
+
+    # classification problem
+    classif_norm = layers.BatchNormalization(trainable=True)(dense1)
+    classif = layers.Dense(1,
+                           activation='sigmoid',
+                           kernel_initializer=tf.keras.initializers.GlorotUniform(),
+                           bias_initializer=tf.keras.initializers.Constant(value=bias_initializer),
+                           name='classification')(classif_norm)
 
     ## concatenate to model
-    model = keras.Model(inputs=[inp, dist, sgt], outputs=out)
+    model = keras.Model(inputs=[inp, dist, sgt], outputs=[regr, classif])
 
     ## compile model
     tf.print('compile model')
     opt = tf.keras.optimizers.Adam(learning_rate=max_lr)
     opt = hvd.DistributedOptimizer(opt)
 
-    model.compile(loss=keras.losses.MeanSquaredError(),
+    losses = {'regression': keras.losses.MeanSquaredError(),
+              'classification': keras.losses.BinaryCrossentropy()}
+    loss_weights = {'regression': 1.0,
+                    'classification': 1.0}
+    metrics = {'regression': ['mean_absolute_error', 'mean_absolute_percentage_error'],
+               'classification': [keras.metrics.AUC(curve='ROC', name='roc_auc'),
+                                  keras.metrics.AUC(curve='PR', name='pr_auc'),
+                                  keras.metrics.BinaryAccuracy(name='accuracy')]}
+
+    model.compile(loss=losses,
+                  loss_weights=loss_weights,
                   optimizer=opt,
-                  metrics=['mean_absolute_error', 'mean_absolute_percentage_error', 'accuracy'],
+                  metrics=metrics,
                   experimental_run_tf_function=False)
 
     # for reproducibility during optimization
     tf.print('......................................................')
     tf.print('MIXTURE OF RESNET AND SPLICEAI')
     tf.print('optimizer: Adam (distributed)')
-    tf.print('loss: mean squared error')
+    tf.print('loss: mean squared error and binary crossentropy')
+    tf.print('regression and classification problem')
     tf.print('skip-connections between blocks')
     tf.print('channels: first')
     tf.print('activation function: leaky relu/he_normal')
@@ -280,7 +336,8 @@ val_steps = int(np.ceil(val_steps / hvd.size()))
 ## fit model
 model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
                                 block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
-                                include_distance=True, whole_seq=True)
+                                include_distance=True, whole_seq=False,
+                                additive_noise_input=False, additive_noise_counts=False)
 
 # print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
 # model = keras.models.load_model(last_model_path)
@@ -291,9 +348,9 @@ if hvd.rank() == 0:
     print('train for {}, validate for {} steps per epoch'.format(steps, val_steps))
 
 fit = model.fit(x=[emb, dist, wholeSeq],
-                y=counts,
+                y=[counts, labels],
                 batch_size=batch_size,
-                validation_data=([emb_test, dist_test, wholeSeq_test], counts_test),
+                validation_data=([emb_test, dist_test, wholeSeq_test], [counts_test, labels_test]),
                 validation_batch_size=batch_size,
                 steps_per_epoch=steps,
                 validation_steps=val_steps,
@@ -330,14 +387,34 @@ def make_prediction(model, outname):
     print('counts:')
     print(counts_test)
     print('prediction:')
-    pred_counts = np.array(pred.flatten())
+    pred_counts = np.array(pred[0].flatten())
     print(pred_counts)
 
+    print('labels:')
+    print(labels_test)
+    print('prediction:')
+    pred_labels = np.array(pred[1].flatten())
+    print(pred_labels)
+
     # merge actual and predicted counts
-    prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
-                               "window": tokens_test[:, 1],
-                               "count": counts_test,
-                               "pred_count": pred_counts})
+    if scale_counts:
+        prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
+                                   "window": tokens_test[:, 1],
+                                   "count": counts_test,
+                                   "pred_count": pred_counts,
+                                   "count_transformed": backtransformation(counts_test, max_counts_test,
+                                                                           min_counts_test),
+                                   "pred_count_transformed": backtransformation(pred_counts, max_counts_test,
+                                                                                min_counts_test),
+                                   "class": labels_test,
+                                   "pred_class": pred_labels})
+    else:
+        prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
+                                   "window": tokens_test[:, 1],
+                                   "count": counts_test,
+                                   "pred_count": pred_counts,
+                                   "class": labels_test,
+                                   "pred_class": pred_labels})
 
     pd.DataFrame.to_csv(prediction, outpath, index=False)
 

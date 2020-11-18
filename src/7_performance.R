@@ -15,7 +15,7 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5652852-1"
+JOBID = "5714916-0-last"
 
 
 ### INPUT ###
@@ -31,20 +31,22 @@ system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/resu
 
 metrics = read.table(paste0("results/", JOBID, "/model_metrics.txt"),
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5652852-1/last_model_prediction_rank0.csv",
+prediction = read.csv("results/5714916-0/last_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5652852-1",
+preds = list.files("results/5714916-0",
                    pattern = "last_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
 pred_counts_aaindex = rep(0, nrow(prediction))
 pred_counts = rep(0, nrow(prediction))
+
+pred_class = rep(0, nrow(prediction))
 
 pb = txtProgressBar(min = 0 , max = length(preds), style = 3)
 for (p in 1:length(preds)) {
@@ -62,14 +64,14 @@ for (p in 1:length(preds)) {
   }
 
   pred_counts = pred_counts + (cnt_pred$pred_count * 1/length(preds))
+  pred_class = pred_class + (cnt_pred$pred_class * 1/length(preds))
 }
 
 prediction$pred_count = pred_counts
+prediction$pred_class = pred_class
 # prediction$pred_count = pred_counts_onehot
 # prediction$pred_count = pred_counts_aaindex
 
-count = prediction$count
-pred_count = prediction$pred_count
 
 # prediction$count = 2^(prediction$count) - 1
 # prediction$pred_count = 2^(prediction$pred_count) - 1
@@ -431,10 +433,7 @@ ggsave(paste0("results/plots/", JOBID, "_trueVSpredicted-scatter-rollmean.png"),
        device = "png", dpi = "retina")
 
 
-########## binarize counts ##########
-prediction.binary = prediction.roll
-prediction.binary$count[prediction.binary$count > 0] = 1
-
+########## binary classification ##########
 
 roc.pr.CURVE = function(prediction = "") {
   
@@ -455,7 +454,7 @@ roc.pr.CURVE = function(prediction = "") {
   }
   
   th_range = c(-Inf,
-               seq(min(prediction$pred_count), max(prediction$pred_count), length.out = 300),
+               seq(min(prediction$pred_class), max(prediction$pred_class), length.out = 300),
                Inf)
   
   sens = rep(NA, length(th_range))
@@ -470,17 +469,17 @@ roc.pr.CURVE = function(prediction = "") {
   for (t in seq_along(th_range)) {
     setTxtProgressBar(pb, t)
     
-    cnt_dat = prediction %>% mutate(pred = ifelse(pred_count > th_range[t], 1, 0))
+    cnt_dat = prediction %>% mutate(pred = ifelse(pred_class > th_range[t], 1, 0))
     
     # P, N, TP, TN, FP
-    P = cnt_dat[cnt_dat$count == 1, ] %>% nrow()
-    N = cnt_dat[cnt_dat$count == 0, ] %>% nrow()
+    P = cnt_dat[cnt_dat$class == 1, ] %>% nrow()
+    N = cnt_dat[cnt_dat$class == 0, ] %>% nrow()
     
-    TP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$count == 1, ] %>% nrow()
-    TN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$count == 0, ] %>% nrow()
+    TP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$class == 1, ] %>% nrow()
+    TN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$class == 0, ] %>% nrow()
     
-    FP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$count == 0, ] %>% nrow()
-    FN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$count == 1, ] %>% nrow()
+    FP = cnt_dat[cnt_dat$pred == 1 & cnt_dat$class == 0, ] %>% nrow()
+    FN = cnt_dat[cnt_dat$pred == 0 & cnt_dat$class == 1, ] %>% nrow()
     
     sens[t] = SENSITIVITY(TP, P)
     spec[t] = SPECIFICITY(TN, N)
@@ -498,7 +497,7 @@ roc.pr.CURVE = function(prediction = "") {
   return(curve)
 }
 
-curve = roc.pr.CURVE(prediction = prediction.binary)
+curve = roc.pr.CURVE(prediction = prediction)
 
 # AUC
 pr.na = which(! is.na(curve$precision | curve$recall))
@@ -526,7 +525,7 @@ roc.curve
 pr.curve = curve %>%
   ggplot() +
   geom_path(aes(recall, precision)) +
-  geom_abline(intercept = length(which(prediction.binary$count == 1))/nrow(prediction.binary),
+  geom_abline(intercept = length(which(prediction$class == 1))/nrow(prediction),
               slope = 0, linetype = "dotted") +
   xlim(c(0,1)) +
   ylim(c(0,1)) +
@@ -541,10 +540,3 @@ ggsave(paste0("results/plots/", JOBID, "_ROC.png"),
 ggsave(paste0("results/plots/", JOBID, "_PR.png"),
        pr.curve, device = "png", dpi = "retina")
 
-
-######### just to be sure ... ###########
-
-train = fread("data/windowTokens_training100-sample.csv") %>% as.data.frame()
-train.acc = str_split_fixed(train$Accession, coll("-"), Inf)[, 1] %>% unique()
-pred.acc = str_split_fixed(prediction$Accession, coll("-"), Inf)[, 1] %>% unique()
-intersect(train.acc, pred.acc)

@@ -13,9 +13,9 @@ import windowMatrices_helper
 
 workers = 12
 embeddingDim = 20
-window_size = 50
+window_size = 25
 
-spec = '_50aa_100-sample'
+spec = '_25aa'
 
 ### MAIN PART ###
 

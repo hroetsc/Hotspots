@@ -62,7 +62,7 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_nor
     dist = np.array([dist_N, dist_C]).transpose()
 
     counts = np.array(tokensAndCounts['counts'], dtype='float32')
-
+    labels = np.where(counts > 0, 1, 0)
 
     if protein_norm:
         print('normalise counts by protein length')
@@ -80,7 +80,8 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_nor
         print('using raw counts')
 
     print('number of features: ', counts.shape[0])
-    return tokens, counts, dist
+
+    return tokens, counts, labels, dist
 
 
 def open_and_format_matrices(group, encoding, spec, extension,
@@ -93,18 +94,18 @@ def open_and_format_matrices(group, encoding, spec, extension,
     print(extension)
 
     # accession, windows and counts
-    tokensAndCounts = pd.read_csv(str('/scratch2/hroetsc/Hotspots/data/'+extension+'windowTokens_'+ group + 'ing' + spec + '.csv'))
-    tokens, counts, dist = format_input(tokensAndCounts,
-                                        pseudocounts,
-                                        relative_dist=relative_dist,
-                                        protein_norm=protein_norm,
-                                        log_counts=log_counts)
-
+    tokensAndCounts = pd.read_csv(
+        str('/scratch2/hroetsc/Hotspots/data/' + extension + 'windowTokens_' + group + 'ing' + spec + '.csv'))
+    tokens, counts, labels, dist = format_input(tokensAndCounts,
+                                                pseudocounts,
+                                                relative_dist=relative_dist,
+                                                protein_norm=protein_norm,
+                                                log_counts=log_counts)
 
     # get embeddings
-    emb_path = str('/scratch2/hroetsc/Hotspots/data/EMBEDDING_' + encoding + '_'+group+spec+'.dat')
-    acc_path = str('/scratch2/hroetsc/Hotspots/data/ACCESSIONS_' + encoding + '_'+group+spec+'.dat')
-    whole_seq_path = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_'+group+spec+'.dat')
+    emb_path = str('/scratch2/hroetsc/Hotspots/data/EMBEDDING_' + encoding + '_' + group + spec + '.dat')
+    acc_path = str('/scratch2/hroetsc/Hotspots/data/ACCESSIONS_' + encoding + '_' + group + spec + '.dat')
+    whole_seq_path = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_' + group + spec + '.dat')
     whole_seq_ids = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_ID_' + group + spec + '.dat')
 
     no_elements = int(windowSize * embeddingDim)
@@ -115,12 +116,12 @@ def open_and_format_matrices(group, encoding, spec, extension,
     wholeSeq_IDs = [None] * tokens.shape[0]
 
     # open weights and accessions binary file
-    with open(emb_path, 'rb') as emin, open(acc_path, 'rb') as ain,\
+    with open(emb_path, 'rb') as emin, open(acc_path, 'rb') as ain, \
             open(whole_seq_path, 'rb') as win, open(whole_seq_ids, 'rb') as win_id:
         # loop over files to get elements
         for b in range(tokens.shape[0]):
             # window embeddings
-            emin.seek(int(b*4*no_elements), 0)
+            emin.seek(int(b * 4 * no_elements), 0)
             dt = np.fromfile(emin, dtype='float32', count=no_elements)
             # make sure to pass 4D-Tensor to model: (batchSize, depth, height, width)
             dt = dt.reshape((windowSize, embeddingDim))
@@ -132,7 +133,7 @@ def open_and_format_matrices(group, encoding, spec, extension,
             accMatrix[b] = int(np.fromfile(ain, dtype='int32', count=1))
 
             # get whole sequence embedding
-            win.seek(int(b*4*sgt_dim), 0)
+            win.seek(int(b * 4 * sgt_dim), 0)
             cnt_ws = np.fromfile(win, dtype='float32', count=sgt_dim)
             wholeSeq[b] = cnt_ws
 
@@ -158,7 +159,7 @@ def open_and_format_matrices(group, encoding, spec, extension,
 
     print(counts[:10])
 
-    return tokens, counts, embMatrix, dist, wholeSeq
+    return tokens, counts, labels, embMatrix, dist, wholeSeq
 
 
 ########################################################################################################################
@@ -185,7 +186,6 @@ class RestoreBestModel(keras.callbacks.Callback):
 
         self.model.set_weights(self.best_weights)
         print('RESTORING WEIGHTS FROM VALIDATION LOSS {}'.format(self.best))
-
 
 
 # plan for learning rates
@@ -218,7 +218,6 @@ class CosineAnnealing(keras.callbacks.Callback):
         #     print('saving model for ensemble prediction')
 
         print("epoch {}: learning rate is {}".format(epoch, lr))
-
 
 
 ########################################################################################################################
@@ -277,7 +276,6 @@ def ensemble_predictions(emb_test, dist_test, epochs, no_cycles, batchSize):
 
     for i in range(ranks):
         for j in range(models_per_rank):
-
             print('prediction on rank {}, model no. {}'.format(i, j))
 
             cnt_model = keras.models.load_model(
@@ -294,4 +292,3 @@ def ensemble_predictions(emb_test, dist_test, epochs, no_cycles, batchSize):
     average_prediction = np.mean(all_predictions, axis=0)
 
     return average_prediction
-
