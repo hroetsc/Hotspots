@@ -15,7 +15,7 @@ library(tidymodels)
 library(DescTools)
 library(zoo)
 
-JOBID = "5714916-0-last"
+JOBID = "5807441-2-last"
 
 
 ### INPUT ###
@@ -31,21 +31,20 @@ system(paste0("scp -rp hroetsc@transfer.gwdg.de:/usr/users/hroetsc/Hotspots/resu
 
 metrics = read.table(paste0("results/", JOBID, "/model_metrics.txt"),
                      sep = ",", stringsAsFactors = F)
-prediction = read.csv("results/5714916-0/last_model_prediction_rank0.csv",
+prediction = read.csv("results/5807441-2/best_model_prediction_rank0.csv",
                       stringsAsFactors = F)
 
 
 
 ### MAIN PART ###
 ########## combine predictions of all GPUs ########## 
-preds = list.files("results/5714916-0",
-                   pattern = "last_model_prediction_rank",
+preds = list.files("results/5807441-2",
+                   pattern = "best_model_prediction_rank",
                    full.names = T)
 
 pred_counts_onehot = rep(0, nrow(prediction))
 pred_counts_aaindex = rep(0, nrow(prediction))
 pred_counts = rep(0, nrow(prediction))
-
 pred_class = rep(0, nrow(prediction))
 
 pb = txtProgressBar(min = 0 , max = length(preds), style = 3)
@@ -75,6 +74,9 @@ prediction$pred_class = pred_class
 
 # prediction$count = 2^(prediction$count) - 1
 # prediction$pred_count = 2^(prediction$pred_count) - 1
+
+# prediction$count = log2(prediction$count + 1)
+# prediction$pred_count = log2(prediction$pred_count + 1)
 
 
 ########## training metrics ##########
@@ -149,6 +151,7 @@ plotting = function(col1 = "", col2 = "", name = ""){
   dev.off()
 }
 
+
 ########## regression ##########
 
 # general
@@ -219,7 +222,6 @@ if(file.exists(out)) {
 }
 
 
-
 ########## cluster proteins ##########
 # prediction = read.csv("results/5365339-11/last_model_prediction_rank0.csv", stringsAsFactors = F)
 # prediction$pred_count = pred_counts
@@ -285,7 +287,7 @@ for (c in cl){
 
 
 ########## map peptides to protein sequence ##########
-window_size = 50
+window_size = 25
 
 prots = read.csv("data/proteins_w_hotspots.csv", stringsAsFactors = F, header = T)
 prots = prots[which(prots$Accession %in% prediction$Accession), ]

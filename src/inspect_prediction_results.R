@@ -37,6 +37,9 @@ if(! dir.exists("results/exploratory")) { dir.create("results/exploratory") }
 well.predicted = overview$Accession[overview$PCC > .7] %>% as.character()
 poorly.predicted = overview$Accession[overview$PCC < .1] %>% as.character()
 
+write.csv(well.predicted, "results/exploratory/predicted_well.csv", row.names = T)
+write.csv(poorly.predicted, "results/exploratory/predicted_poorly.csv", row.names = T)
+
 
 ########## check for overstudying ##########
 sampling_frequency = data.frame(Accession = str_split_fixed(overview$Accession, coll("-"), Inf)[, 1],

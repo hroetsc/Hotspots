@@ -22,10 +22,10 @@ props = left_join(hp, props)
 
 
 ### MAIN PART ###
+######### general properties #########
 prediction = na.omit(prediction)
 prots = prediction$Accession %>% unique()
 
-######### general properties #########
 overview = data.frame(Accession = prots,
                       R_sq = rep(NA, length(prots)),
                       PCC = rep(NA, length(prots)),

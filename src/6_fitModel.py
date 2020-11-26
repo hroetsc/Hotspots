@@ -12,8 +12,9 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+import tensorflow.keras.backend as K
 
-tf.keras.backend.clear_session()
+K.clear_session()
 import horovod.tensorflow.keras as hvd
 
 hvd.init()
@@ -37,14 +38,15 @@ if gpus:
 print('HYPERPARAMETERS')
 
 spec = '_25aa'
-scale_counts = True
+scale_counts = False
+oversample_large = False
 
 windowSize = 25
 embeddingDim = 20
 sgt_dim = 400
 
-epochs = 300
-pseudocounts = 1
+epochs = 100
+pseudocounts = 2   # !!!
 no_cycles = int(epochs / 10)
 
 batch_size = 256
@@ -53,7 +55,9 @@ starting_filter = 16
 kernel_size = 3
 block_size = 5
 num_blocks = 4
-dense_nodes = 1024
+
+dense_nodes = 1024  # !!!
+noise_sd = 0.3  # !!!
 
 print('number of epochs, adjusted by number of GPUs: ', epochs)
 print('batch size, adjusted by number of GPUs: ', batch_size)
@@ -70,10 +74,12 @@ last_model_path = '/scratch2/hroetsc/Hotspots/results/model/last_model_rank{}.h5
 
 print('#####')
 print('ONE HOT AND AA INDEX ON DIFFERENT RANKS')
+# print('AA INDEX')
 print('no extension')
 print('#####')
 
 enc = 'oneHOT' if hvd.rank() % 2 == 0 else 'AAindex'
+# enc = 'AAindex'
 
 tokens, counts, labels, emb, dist, wholeSeq = open_and_format_matrices(group='train',
                                                                        encoding=enc,
@@ -84,7 +90,8 @@ tokens, counts, labels, emb, dist, wholeSeq = open_and_format_matrices(group='tr
                                                                        sgt_dim=sgt_dim,
                                                                        relative_dist=False,
                                                                        protein_norm=False,
-                                                                       log_counts=True)
+                                                                       log_counts=True,
+                                                                       pseudocounts=pseudocounts)
 tokens_test, counts_test, labels_test, emb_test, dist_test, wholeSeq_test = open_and_format_matrices(group='test',
                                                                                                      encoding=enc,
                                                                                                      spec=spec,
@@ -94,7 +101,29 @@ tokens_test, counts_test, labels_test, emb_test, dist_test, wholeSeq_test = open
                                                                                                      sgt_dim=sgt_dim,
                                                                                                      relative_dist=False,
                                                                                                      protein_norm=False,
-                                                                                                     log_counts=True)
+                                                                                                     log_counts=True,
+                                                                                                     pseudocounts=pseudocounts)
+
+# oversample large training counts
+if oversample_large:
+    k1, k2, k3, k4, k5, k6, k7 = np.where(counts > 1)[0], np.where(counts > 1.2)[0], np.where(counts > 1.4)[0], \
+                                 np.where(counts > 1.6)[0], np.where(counts > 1.8)[0], np.where(counts > 2)[0], \
+                                 np.where(counts > 3)[0]
+
+    ind = np.concatenate([k1, k2, k3, k4, k5, k6, k7])
+
+    # concatenate
+    tokens = np.concatenate([tokens, tokens[ind, :]], axis=0)
+    counts = np.concatenate([counts, counts[ind]], axis=0)
+    labels = np.concatenate([labels, labels[ind]], axis=0)
+    emb = np.concatenate([emb, emb[ind, :, :, :]], axis=0)
+    dist = np.concatenate([dist, dist[ind, :]], axis=0)
+    wholeSeq = np.concatenate([wholeSeq, wholeSeq[ind, :]], axis=0)
+
+    # shuffle
+    rnd = np.random.randint(low=0, high=counts.shape[0], size=counts.shape[0])
+    tokens, counts, labels, emb, dist, wholeSeq = tokens[rnd, :], counts[rnd], labels[rnd], \
+                                                  emb[rnd, :, :, :], dist[rnd, :], wholeSeq[rnd, :]
 
 
 # scale counts between 0 and 1 for regression
@@ -121,16 +150,22 @@ bias_initializer = 0
 
 
 ### MAIN PART ###
+# custom loss function
+def SMAPE(y_true, y_pred):
+    numerator = K.sum(K.square(y_pred - y_true))
+    denominator = K.sum(y_true + y_pred)
+    return numerator / denominator
+
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
                             include_distance=True, whole_seq=False,
                             additive_noise_input=True, additive_noise_counts=True):
     num_blocks_list = [block_size] * num_blocks
     dilation_rate_list = [1] * num_blocks
 
-    noise_sd = 0.2
-    regr_activation = 'sigmoid' if scale_counts else 'linear'
+    regr_activation = 'sigmoid' if scale_counts else 'relu'
 
     print(locals())
+
 
     # build dense relu layers with batch norm and dropout
     def dense_layer(prev_layer, nodes):
@@ -184,7 +219,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     sgt = keras.Input(shape=(sgt_dim),
                       name='whole_sequence_embedding')
 
-    # noise layer
+    ## noise layer
     if additive_noise_input:
         inp0 = layers.GaussianNoise(stddev=noise_sd)(inp)
     else:
@@ -261,7 +296,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     regr = layers.Dense(1,
                         activation=regr_activation,
-                        kernel_initializer=tf.keras.initializers.GlorotUniform(),
+                        kernel_initializer=tf.keras.initializers.HeNormal(),
                         bias_initializer=keras.initializers.Constant(value=bias_initializer),
                         name='regression')(regr_norm)
 
@@ -281,11 +316,11 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     opt = tf.keras.optimizers.Adam(learning_rate=max_lr)
     opt = hvd.DistributedOptimizer(opt)
 
-    losses = {'regression': keras.losses.MeanSquaredError(),
-              'classification': keras.losses.BinaryCrossentropy()}
+    losses = {'regression': SMAPE,
+              'classification': keras.losses.BinaryCrossentropy(label_smoothing=.1)}
     loss_weights = {'regression': 1.0,
-                    'classification': 1.0}
-    metrics = {'regression': ['mean_absolute_error', 'mean_absolute_percentage_error'],
+                    'classification': 0.05 if scale_counts else 0.2}
+    metrics = {'regression': ['mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error'],
                'classification': [keras.metrics.AUC(curve='ROC', name='roc_auc'),
                                   keras.metrics.AUC(curve='PR', name='pr_auc'),
                                   keras.metrics.BinaryAccuracy(name='accuracy')]}
@@ -300,7 +335,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     tf.print('......................................................')
     tf.print('MIXTURE OF RESNET AND SPLICEAI')
     tf.print('optimizer: Adam (distributed)')
-    tf.print('loss: mean squared error and binary crossentropy')
+    tf.print('loss: symmetric mean absolute percentage error and binary crossentropy')
     tf.print('regression and classification problem')
     tf.print('skip-connections between blocks')
     tf.print('channels: first')
@@ -337,7 +372,7 @@ val_steps = int(np.ceil(val_steps / hvd.size()))
 model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
                                 block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
                                 include_distance=True, whole_seq=False,
-                                additive_noise_input=False, additive_noise_counts=False)
+                                additive_noise_input=True, additive_noise_counts=True)
 
 # print('CONTINUE TRAINING OF EXISTING MODEL ON NEW DATA')
 # model = keras.models.load_model(last_model_path)
@@ -368,8 +403,8 @@ save_training_res(model, fit, best_model_path)
 ########## part 2: make prediction ##########
 
 print('LOAD MODELS')
-last_model = keras.models.load_model(last_model_path)
-best_model = keras.models.load_model(best_model_path)
+last_model = keras.models.load_model(last_model_path, custom_objects={'SMAPE': SMAPE})
+best_model = keras.models.load_model(best_model_path, custom_objects={'SMAPE': SMAPE})
 
 
 def make_prediction(model, outname):
@@ -422,5 +457,3 @@ def make_prediction(model, outname):
 print('MAKE PREDICTION')
 make_prediction(model=best_model, outname='best_model')
 make_prediction(model=last_model, outname='last_model')
-
-tf.keras.backend.clear_session()

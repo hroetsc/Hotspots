@@ -74,7 +74,7 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_nor
             counts[cnt] = counts[cnt] / len(cnt)
 
     if log_counts:
-        counts = np.log2((counts + pseudocounts))
+        counts = np.log2(counts + pseudocounts)
         print('using log-transformed counts')
     else:
         print('using raw counts')
@@ -87,7 +87,7 @@ def format_input(tokensAndCounts, pseudocounts, relative_dist=False, protein_nor
 def open_and_format_matrices(group, encoding, spec, extension,
                              windowSize, embeddingDim, sgt_dim,
                              relative_dist, protein_norm, log_counts,
-                             pseudocounts=1):
+                             pseudocounts):
     print(group)
     print(encoding)
     print(spec)
@@ -217,7 +217,7 @@ class CosineAnnealing(keras.callbacks.Callback):
         #     self.ensemble += 1
         #     print('saving model for ensemble prediction')
 
-        print("epoch {}: learning rate is {}".format(epoch, lr))
+        print("epoch {}: learning rate is {}".format(str(int(epoch)+1), lr))
 
 
 ########################################################################################################################
