@@ -104,10 +104,60 @@ write.csv(train_IDs, "data/IDs_train.csv", row.names = F)
 write.csv(test_IDs, "data/IDs_test.csv", row.names = F)
 
 
+
+
 ### get same proteins for different window sizes ###
+
 train_IDs = read.csv("data/IDs_train.csv", stringsAsFactors = F) %>% c() %>% unlist()
 test_IDs = read.csv("data/IDs_test.csv", stringsAsFactors = F) %>% c() %>% unlist()
 
+
+# first count vs mean count
+windowTokens_firstAA = fread("data/windowTokens25aa_firstAA.csv") %>%
+  as.data.frame()
+train_firstAA = windowTokens_firstAA[windowTokens_firstAA$Accession %in% train_IDs, ]
+test_firstAA = windowTokens_firstAA[windowTokens_firstAA$Accession %in% test_IDs, ]
+
+train = fread("data/windowTokens_training_25aa.csv") %>%
+  as.data.frame()
+all(train$window == train_firstAA$window)
+
+test = fread("data/windowTokens_testing_25aa.csv") %>%
+  as.data.frame()
+all(test$window == test_firstAA$window)
+
+write.csv(train_firstAA, "data/windowTokens_training_25aa_firstAA.csv", row.names = F)
+write.csv(test_firstAA, "data/windowTokens_testing_25aa_firstAA.csv", row.names = F)
+
+summary(windowTokens_firstAA$counts)
+plot(density(windowTokens_firstAA$counts))
+
+
+
+# first count vs mean count
+windowTokens_mean = fread("data/windowTokens25aa_mean.csv") %>%
+  as.data.frame()
+train_mean = windowTokens_mean[windowTokens_mean$Accession %in% train_IDs, ]
+test_mean = windowTokens_mean[windowTokens_mean$Accession %in% test_IDs, ]
+
+train = fread("data/windowTokens_training_25aa.csv") %>%
+  as.data.frame()
+all(train$window == train_mean$window)
+
+test = fread("data/windowTokens_testing_25aa.csv") %>%
+  as.data.frame()
+all(test$window == test_mean$window)
+
+write.csv(train_mean, "data/windowTokens_training_25aa_mean.csv", row.names = F)
+write.csv(test_mean, "data/windowTokens_testing_25aa_mean.csv", row.names = F)
+
+summary(windowTokens_mean$counts)
+plot(density(windowTokens_mean$counts))
+
+
+
+
+# different window sizes
 windows_10aa = fread("data/windowTokens10aa.csv") %>%
   as.data.frame()
 

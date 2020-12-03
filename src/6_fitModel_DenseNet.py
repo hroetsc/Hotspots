@@ -46,7 +46,7 @@ embeddingDim = 20
 sgt_dim = 400
 
 epochs = 100
-pseudocounts = 1   # !!!
+pseudocounts = 1  # !!!
 no_cycles = int(epochs / 10)
 
 batch_size = 256
@@ -146,6 +146,8 @@ if scale_counts:
     print('max test count:', max_counts_test, ', min test count:', min_counts_test)
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
+
+
 # bias_initializer = 0
 
 
@@ -156,16 +158,68 @@ def SMAPE(y_true, y_pred):
     denominator = K.sum(y_true + y_pred)
     return numerator / denominator
 
-def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
+
+def build_and_compile_model(max_lr, starting_filter, kernel_size, dense_nodes,
                             include_distance=True, whole_seq=False,
                             additive_noise_input=True, additive_noise_counts=True,
                             weight_constraint=False):
-    num_blocks_list = [block_size] * num_blocks
-    dilation_rate_list = [1] * num_blocks
+    theta = 0.5  # compression factor
+    k = 6  # growth rate
+    blocks = 3  # number of dense blocks
+    n_layers_list = [4] * 3
+    n_filters_list = [starting_filter] * 3
 
     regr_activation = 'sigmoid' if scale_counts else 'relu'
 
     print(locals())
+
+    # composite function
+    def conv(layer, maps, strides, bottleneck=True):
+        if bottleneck:
+            bn = layers.BatchNormalization(trainable=True)(layer)
+            act = layers.Activation('relu')(bn)
+            layer = layers.Conv2D(filters=maps,
+                                  kernel_size=(1, 1),
+                                  strides=strides,
+                                  padding='same',
+                                  data_format='channels_first')(act)
+
+        bn = layers.BatchNormalization(trainable=True)(layer)
+        act = layers.Activation('relu')(bn)
+        layer = layers.Conv2D(filters=maps,
+                              kernel_size=(3, 3),
+                              strides=strides,
+                              padding='same',
+                              data_format='channels_first')(act)
+        return layer
+
+    # dense block
+    def dense_block(layer, n_layers, maps, k=k):
+        for i in range(n_layers):
+            conv_out = conv(layer, maps=maps, strides=1)
+            layer = layers.Concatenate(axis=1)([layer, conv_out])
+            maps += k
+
+        return layer, maps
+
+    # transition layer with compression
+    def transition(layer, theta=theta):
+        m = layer.shape[1]
+        n_maps = int(np.floor(m * theta))
+
+        bn = layers.BatchNormalization(trainable=True)(layer)
+        act = layers.Activation('relu')(bn)
+        layer = layers.Conv2D(filters=n_maps,
+                              kernel_size=(1, 1),
+                              strides=1,
+                              padding='same',
+                              data_format='channels_first')(act)
+
+        pool = layers.AveragePooling2D(pool_size=(2, 2),
+                                       strides=2,
+                                       padding='same',
+                                       data_format='channels_first')(layer)
+        return pool
 
     # build dense relu layers with batch norm and dropout
     def dense_layer(prev_layer, nodes):
@@ -173,42 +227,6 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
         dense = layers.Dense(nodes, activation='relu',
                              kernel_initializer=tf.keras.initializers.HeNormal())(norm)
         return dense
-
-    # activation and batch normalization
-    def bn_relu(inp_layer):
-        bn = layers.BatchNormalization(trainable=True)(inp_layer)
-        relu = layers.LeakyReLU()(bn)
-        return relu
-
-    # residual blocks (convolutions)
-    def residual_block(inp_layer, downsample, filters, kernel_size, dilation_rate):
-        y = bn_relu(inp_layer)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=(1 if not downsample else 2),
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-        y = bn_relu(y)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=1,
-                          dilation_rate=dilation_rate,
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-
-        if downsample:
-            inp_layer = layers.Conv2D(filters=filters,
-                                      kernel_size=1,
-                                      strides=2,
-                                      padding='same',
-                                      kernel_initializer=tf.keras.initializers.HeNormal(),
-                                      data_format='channels_first')(inp_layer)
-
-        out = layers.Add()([inp_layer, y])
-
-        return out
 
     ## input
     tf.print('model input')
@@ -225,52 +243,28 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     else:
         inp0 = inp
 
-    ## convolutional layers (ResNet)
-    tf.print('residual blocks')
-    tf.print('STRUCTURE OF RESIDUAL BLOCK: D')
-
-    # structure of residual blocks:
-    # a) original: weight-BN-ReLU-weight-BN-addition-ReLU
-    # b) BN after addition: weight-BN-ReLU-weight-addition-BN-ReLU
-    # c) ReLU before addition: weight-BN-ReLU-weight-BN-ReLU-addition
-    # d) full pre-activation (SpliceAI): BN-ReLU-weight-BN-ReLU-weight-addition
-
+    ## convolutional layers (DenseNet)
     # initial convolution
     t = layers.BatchNormalization(trainable=True)(inp0)
+    t = layers.Activation('relu')(inp)
     t = layers.Conv2D(filters=starting_filter,
-                      kernel_size=kernel_size,
-                      strides=2,
+                      kernel_size=(7, 7),
+                      strides=1,
                       padding='same',
-                      kernel_initializer=tf.keras.initializers.HeNormal(),
                       data_format='channels_first')(t)
-    t = bn_relu(t)
+    layer = layers.MaxPool2D(pool_size=(3, 3),
+                             strides=1,
+                             padding='same',
+                             data_format='channels_first')(t)
+    tf.print(layer.shape)
 
-    # residual blocks
-    for i in range(len(num_blocks_list)):
-        no_blocks = num_blocks_list[i]
-        dil_rate = dilation_rate_list[i]
+    for b in range(blocks):
+        layer, maps = dense_block(layer, n_layers=n_layers_list[b], maps=n_filters_list[b])
+        layer = transition(layer)
+        tf.print(layer.shape)
 
-        t_shortcut = layers.Conv2D(filters=starting_filter,
-                                   kernel_size=kernel_size,
-                                   strides=(1 if i == 0 else 2),
-                                   padding='same',
-                                   kernel_initializer=tf.keras.initializers.HeNormal(),
-                                   data_format='channels_first')(t)
-
-        for j in range(no_blocks):
-            t = residual_block(t,
-                               downsample=(j == 0 and i != 0),
-                               filters=starting_filter,
-                               kernel_size=kernel_size,
-                               dilation_rate=dil_rate)
-
-        t = layers.Add()([t, t_shortcut])
-        starting_filter *= 2
-
-    t = layers.AveragePooling2D(pool_size=4,
-                                data_format='channels_first',
-                                padding='same')(t)
-    flat = layers.Flatten()(t)
+    flat = layers.GlobalAveragePooling2D(data_format='channels_first')(layer)
+    tf.print(flat.shape)
 
     # concatenate with distance
     if include_distance:
@@ -335,7 +329,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     # for reproducibility during optimization
     tf.print('......................................................')
-    tf.print('MIXTURE OF RESNET AND SPLICEAI')
+    tf.print('DENSE NET')
     tf.print('optimizer: Adam (distributed)')
     tf.print('loss: mean squared error and binary crossentropy')
     tf.print('regression and classification problem')
@@ -372,7 +366,7 @@ val_steps = int(np.ceil(val_steps / hvd.size()))
 
 ## fit model
 model = build_and_compile_model(max_lr=max_lr, starting_filter=starting_filter, kernel_size=kernel_size,
-                                block_size=block_size, dense_nodes=dense_nodes, num_blocks=num_blocks,
+                                dense_nodes=dense_nodes,
                                 include_distance=True, whole_seq=False,
                                 additive_noise_input=True, additive_noise_counts=True,
                                 weight_constraint=False)
@@ -459,4 +453,3 @@ def make_prediction(model, outname):
 print('MAKE PREDICTION')
 make_prediction(model=best_model, outname='best_model')
 make_prediction(model=last_model, outname='last_model')
-

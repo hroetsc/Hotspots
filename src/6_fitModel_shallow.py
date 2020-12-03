@@ -167,6 +167,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     print(locals())
 
+
     # build dense relu layers with batch norm and dropout
     def dense_layer(prev_layer, nodes):
         norm = layers.BatchNormalization(trainable=True)(prev_layer)
@@ -180,35 +181,6 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
         relu = layers.LeakyReLU()(bn)
         return relu
 
-    # residual blocks (convolutions)
-    def residual_block(inp_layer, downsample, filters, kernel_size, dilation_rate):
-        y = bn_relu(inp_layer)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=(1 if not downsample else 2),
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-        y = bn_relu(y)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=1,
-                          dilation_rate=dilation_rate,
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-
-        if downsample:
-            inp_layer = layers.Conv2D(filters=filters,
-                                      kernel_size=1,
-                                      strides=2,
-                                      padding='same',
-                                      kernel_initializer=tf.keras.initializers.HeNormal(),
-                                      data_format='channels_first')(inp_layer)
-
-        out = layers.Add()([inp_layer, y])
-
-        return out
 
     ## input
     tf.print('model input')
@@ -225,16 +197,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     else:
         inp0 = inp
 
-    ## convolutional layers (ResNet)
-    tf.print('residual blocks')
-    tf.print('STRUCTURE OF RESIDUAL BLOCK: D')
-
-    # structure of residual blocks:
-    # a) original: weight-BN-ReLU-weight-BN-addition-ReLU
-    # b) BN after addition: weight-BN-ReLU-weight-addition-BN-ReLU
-    # c) ReLU before addition: weight-BN-ReLU-weight-BN-ReLU-addition
-    # d) full pre-activation (SpliceAI): BN-ReLU-weight-BN-ReLU-weight-addition
-
+    ## convolutional layers
     # initial convolution
     t = layers.BatchNormalization(trainable=True)(inp0)
     t = layers.Conv2D(filters=starting_filter,
@@ -245,27 +208,14 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                       data_format='channels_first')(t)
     t = bn_relu(t)
 
-    # residual blocks
-    for i in range(len(num_blocks_list)):
-        no_blocks = num_blocks_list[i]
-        dil_rate = dilation_rate_list[i]
-
-        t_shortcut = layers.Conv2D(filters=starting_filter,
-                                   kernel_size=kernel_size,
-                                   strides=(1 if i == 0 else 2),
-                                   padding='same',
-                                   kernel_initializer=tf.keras.initializers.HeNormal(),
-                                   data_format='channels_first')(t)
-
-        for j in range(no_blocks):
-            t = residual_block(t,
-                               downsample=(j == 0 and i != 0),
-                               filters=starting_filter,
-                               kernel_size=kernel_size,
-                               dilation_rate=dil_rate)
-
-        t = layers.Add()([t, t_shortcut])
-        starting_filter *= 2
+    # second convolution
+    t = layers.Conv2D(filters=int(starting_filter*2),
+                      kernel_size=kernel_size,
+                      strides=2,
+                      padding='same',
+                      kernel_initializer=tf.keras.initializers.HeNormal(),
+                      data_format='channels_first')(t)
+    t = bn_relu(t)
 
     t = layers.AveragePooling2D(pool_size=4,
                                 data_format='channels_first',
@@ -335,7 +285,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     # for reproducibility during optimization
     tf.print('......................................................')
-    tf.print('MIXTURE OF RESNET AND SPLICEAI')
+    tf.print('SHALLOW CONV NET WITH 2 CONVOLUTIONS + POOLING')
     tf.print('optimizer: Adam (distributed)')
     tf.print('loss: mean squared error and binary crossentropy')
     tf.print('regression and classification problem')

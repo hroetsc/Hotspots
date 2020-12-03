@@ -15,7 +15,7 @@ library(future)
 registerDoParallel(availableCores())
 
 
-window_size = 50
+window_size = 25
 # ext = 25  # extension, if used
 
 
@@ -116,7 +116,14 @@ get_windows_counts = function(extension = "", outfile = ""){
         loc = str_locate(cnt.Prot$seqs,
                          Wnd.for.counts) %>% as.numeric()
         
-        wnd.Tokens$counts[pos1] = windowCounts[[i]][c(loc[1]:loc[2])] %>% mean()
+        # centered window
+        window_pos1 = loc[1]-floor(window_size/2)
+        window_pos2 = loc[2]+floor(window_size/2)
+        
+        if (window_pos1 < 1) { window_pos1 = 1 }
+        if (window_pos2 > nrow(cnt.AA)) { window_pos2 = nrow(cnt.AA) }
+        
+        wnd.Tokens$counts[pos1] = windowCounts[[i]][window_pos1:window_pos2] %>% mean()
         
         # increment positions of sliding window
         pos1 = pos1 + 1
@@ -167,7 +174,7 @@ get_windows_counts = function(extension = "", outfile = ""){
 
 # apply
 get_windows_counts(extension = "none",
-                   outfile = "data/windowTokens50aa")
+                   outfile = "data/windowTokens25aa_mean")
 
 # save proteins with hotspots
 write.csv(prots, "data/proteins_w_hotspots.csv", row.names = F)

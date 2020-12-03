@@ -34,11 +34,12 @@ protExpr = fread("proteinatlas.tsv") %>% as.data.frame()
 if(! dir.exists("results/exploratory")) { dir.create("results/exploratory") }
 
 # average count > 0.6 (below that not important)
-well.predicted = overview$Accession[overview$PCC > .7] %>% as.character()
-poorly.predicted = overview$Accession[overview$PCC < .1] %>% as.character()
+well.predicted = overview[overview$PCC > .7, c("Accession", "PCC")]
+poorly.predicted = overview[overview$PCC < .1, c("Accession", "PCC")]
 
-write.csv(well.predicted, "results/exploratory/predicted_well.csv", row.names = T)
-write.csv(poorly.predicted, "results/exploratory/predicted_poorly.csv", row.names = T)
+write.csv(well.predicted, "results/exploratory/predicted_well.csv", row.names = F)
+write.csv(poorly.predicted, "results/exploratory/predicted_poorly.csv", row.names = F)
+write.csv(overview[, c("Accession", "PCC")], "results/exploratory/predicted_prots.csv", row.names = F)
 
 
 ########## check for overstudying ##########
