@@ -38,13 +38,15 @@ if gpus:
 print('HYPERPARAMETERS')
 
 spec = '_25aa_mean'
+scale_counts = False
+oversample_large = False
 
 windowSize = 25
 embeddingDim = 20
 sgt_dim = 400
 
 epochs = 100
-pseudocounts = 1  # !!!
+pseudocounts = 1   # !!!
 no_cycles = int(epochs / 10)
 
 batch_size = 256
@@ -102,11 +104,58 @@ tokens_test, counts_test, labels_test, emb_test, dist_test, wholeSeq_test = open
                                                                                                      log_counts=True,
                                                                                                      pseudocounts=pseudocounts)
 
+# oversample large training counts
+if oversample_large:
+    k1, k2, k3, k4, k5, k6, k7 = np.where(counts > 1)[0], np.where(counts > 1.2)[0], np.where(counts > 1.4)[0], \
+                                 np.where(counts > 1.6)[0], np.where(counts > 1.8)[0], np.where(counts > 2)[0], \
+                                 np.where(counts > 3)[0]
+
+    ind = np.concatenate([k1, k2, k3, k4, k5, k6, k7])
+
+    # concatenate
+    tokens = np.concatenate([tokens, tokens[ind, :]], axis=0)
+    counts = np.concatenate([counts, counts[ind]], axis=0)
+    labels = np.concatenate([labels, labels[ind]], axis=0)
+    emb = np.concatenate([emb, emb[ind, :, :, :]], axis=0)
+    dist = np.concatenate([dist, dist[ind, :]], axis=0)
+    wholeSeq = np.concatenate([wholeSeq, wholeSeq[ind, :]], axis=0)
+
+    # shuffle
+    rnd = np.random.randint(low=0, high=counts.shape[0], size=counts.shape[0])
+    tokens, counts, labels, emb, dist, wholeSeq = tokens[rnd, :], counts[rnd], labels[rnd], \
+                                                  emb[rnd, :, :, :], dist[rnd, :], wholeSeq[rnd, :]
+
+
+# scale counts between 0 and 1 for regression
+def scaling(x0):
+    x1 = (x0 - np.min(x0)) / (np.max(x0) - np.min(x0))
+    return x1, np.max(x0), np.min(x0)
+
+
+def backtransformation(x1, max_x0, min_x0):
+    x0 = x1 * (max_x0 - min_x0) + min_x0
+    return x0
+
+
+if scale_counts:
+    print('scaling counts between 0 and 1')
+    counts, max_counts, min_counts = scaling(counts)
+    counts_test, max_counts_test, min_counts_test = scaling(counts_test)
+
+    print('max train count:', max_counts, ', min train count:', min_counts)
+    print('max test count:', max_counts_test, ', min test count:', min_counts_test)
 
 bias_initializer = np.mean(counts)  # initialise bias with mean of all counts to prevent model from learning the bias
 # bias_initializer = 0
 
+
 ### MAIN PART ###
+# custom loss function
+def SMAPE(y_true, y_pred):
+    numerator = K.sum(K.square(y_pred - y_true))
+    denominator = K.sum(y_true + y_pred)
+    return numerator / denominator
+
 def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, dense_nodes, num_blocks,
                             include_distance=True, whole_seq=False,
                             additive_noise_input=True, additive_noise_counts=True,
@@ -114,9 +163,10 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     num_blocks_list = [block_size] * num_blocks
     dilation_rate_list = [1] * num_blocks
 
-    regr_activation = 'relu'
+    regr_activation = 'sigmoid' if scale_counts else 'relu'
 
     print(locals())
+
 
     # build dense relu layers with batch norm and dropout
     def dense_layer(prev_layer, nodes):
@@ -131,35 +181,6 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
         relu = layers.LeakyReLU()(bn)
         return relu
 
-    # residual blocks (convolutions)
-    def residual_block(inp_layer, downsample, filters, kernel_size, dilation_rate):
-        y = bn_relu(inp_layer)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=(1 if not downsample else 2),
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-        y = bn_relu(y)
-        y = layers.Conv2D(filters=filters,
-                          kernel_size=kernel_size,
-                          strides=1,
-                          dilation_rate=dilation_rate,
-                          padding='same',
-                          kernel_initializer=tf.keras.initializers.HeNormal(),
-                          data_format='channels_first')(y)
-
-        if downsample:
-            inp_layer = layers.Conv2D(filters=filters,
-                                      kernel_size=1,
-                                      strides=2,
-                                      padding='same',
-                                      kernel_initializer=tf.keras.initializers.HeNormal(),
-                                      data_format='channels_first')(inp_layer)
-
-        out = layers.Add()([inp_layer, y])
-
-        return out
 
     ## input
     tf.print('model input')
@@ -167,7 +188,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                       name='input_window')
     dist = keras.Input(shape=(2),
                        name='distance')
-    sgt = keras.Input(shape=(1, sgt_dim),
+    sgt = keras.Input(shape=(sgt_dim),
                       name='whole_sequence_embedding')
 
     ## noise layer
@@ -176,16 +197,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     else:
         inp0 = inp
 
-    ## convolutional layers (ResNet)
-    tf.print('residual blocks')
-    tf.print('STRUCTURE OF RESIDUAL BLOCK: D')
-
-    # structure of residual blocks:
-    # a) original: weight-BN-ReLU-weight-BN-addition-ReLU
-    # b) BN after addition: weight-BN-ReLU-weight-addition-BN-ReLU
-    # c) ReLU before addition: weight-BN-ReLU-weight-BN-ReLU-addition
-    # d) full pre-activation (SpliceAI): BN-ReLU-weight-BN-ReLU-weight-addition
-
+    ## convolutional layers
     # initial convolution
     t = layers.BatchNormalization(trainable=True)(inp0)
     t = layers.Conv2D(filters=starting_filter,
@@ -196,27 +208,14 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
                       data_format='channels_first')(t)
     t = bn_relu(t)
 
-    # residual blocks
-    for i in range(len(num_blocks_list)):
-        no_blocks = num_blocks_list[i]
-        dil_rate = dilation_rate_list[i]
-
-        t_shortcut = layers.Conv2D(filters=starting_filter,
-                                   kernel_size=kernel_size,
-                                   strides=(1 if i == 0 else 2),
-                                   padding='same',
-                                   kernel_initializer=tf.keras.initializers.HeNormal(),
-                                   data_format='channels_first')(t)
-
-        for j in range(no_blocks):
-            t = residual_block(t,
-                               downsample=(j == 0 and i != 0),
-                               filters=starting_filter,
-                               kernel_size=kernel_size,
-                               dilation_rate=dil_rate)
-
-        t = layers.Add()([t, t_shortcut])
-        starting_filter *= 2
+    # second convolution
+    t = layers.Conv2D(filters=int(starting_filter*2),
+                      kernel_size=kernel_size,
+                      strides=2,
+                      padding='same',
+                      kernel_initializer=tf.keras.initializers.HeNormal(),
+                      data_format='channels_first')(t)
+    t = bn_relu(t)
 
     t = layers.AveragePooling2D(pool_size=4,
                                 data_format='channels_first',
@@ -229,9 +228,9 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     # add whole sequence embedding
     if whole_seq:
-        sgt_dense = layers.Flatten()(sgt)
-        sgt_dense = dense_layer(sgt_dense, nodes=256)
+        sgt_dense = dense_layer(sgt, nodes=256)
         sgt_dense = dense_layer(sgt_dense, nodes=64)
+
         flat = layers.Concatenate()([flat, sgt_dense])
 
     ## dense layers
@@ -241,6 +240,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     # regression problem
     regr_norm = layers.BatchNormalization(trainable=True)(dense1)
+
     if additive_noise_counts:
         regr_norm = layers.GaussianNoise(stddev=noise_sd)(regr_norm)
 
@@ -271,8 +271,8 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
     losses = {'regression': keras.losses.MeanSquaredError(),
               'classification': keras.losses.BinaryCrossentropy(label_smoothing=.1)}
     loss_weights = {'regression': 1.0,
-                    'classification': 0.1}
-    metrics = {'regression': ['mean_absolute_error', 'mean_absolute_percentage_error'],
+                    'classification': 0.05 if scale_counts else 0.2}
+    metrics = {'regression': ['mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error'],
                'classification': [keras.metrics.AUC(curve='ROC', name='roc_auc'),
                                   keras.metrics.AUC(curve='PR', name='pr_auc'),
                                   keras.metrics.BinaryAccuracy(name='accuracy')]}
@@ -285,7 +285,7 @@ def build_and_compile_model(max_lr, starting_filter, kernel_size, block_size, de
 
     # for reproducibility during optimization
     tf.print('......................................................')
-    tf.print('MIXTURE OF RESNET AND SPLICEAI')
+    tf.print('SHALLOW CONV NET WITH 2 CONVOLUTIONS + POOLING')
     tf.print('optimizer: Adam (distributed)')
     tf.print('loss: mean squared error and binary crossentropy')
     tf.print('regression and classification problem')
@@ -384,12 +384,24 @@ def make_prediction(model, outname):
     print(pred_labels)
 
     # merge actual and predicted counts
-    prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
-                               "window": tokens_test[:, 1],
-                               "count": counts_test,
-                               "pred_count": pred_counts,
-                               "class": labels_test,
-                               "pred_class": pred_labels})
+    if scale_counts:
+        prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
+                                   "window": tokens_test[:, 1],
+                                   "count": counts_test,
+                                   "pred_count": pred_counts,
+                                   "count_transformed": backtransformation(counts_test, max_counts_test,
+                                                                           min_counts_test),
+                                   "pred_count_transformed": backtransformation(pred_counts, max_counts_test,
+                                                                                min_counts_test),
+                                   "class": labels_test,
+                                   "pred_class": pred_labels})
+    else:
+        prediction = pd.DataFrame({"Accession": tokens_test[:, 0],
+                                   "window": tokens_test[:, 1],
+                                   "count": counts_test,
+                                   "pred_count": pred_counts,
+                                   "class": labels_test,
+                                   "pred_class": pred_labels})
 
     pd.DataFrame.to_csv(prediction, outpath, index=False)
 
@@ -397,3 +409,4 @@ def make_prediction(model, outname):
 print('MAKE PREDICTION')
 make_prediction(model=best_model, outname='best_model')
 make_prediction(model=last_model, outname='last_model')
+

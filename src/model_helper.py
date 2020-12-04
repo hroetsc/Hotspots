@@ -88,6 +88,12 @@ def open_and_format_matrices(group, encoding, spec, extension,
                              windowSize, embeddingDim, sgt_dim,
                              relative_dist, protein_norm, log_counts,
                              pseudocounts):
+
+    path = '/local/scratch2/hroetsc/Hotspots/data/cnt/'
+    if not os.path.exists(path + 'EMBEDDING_' + encoding + '_' + group + spec + '.dat'):
+        os.system('unzip /local/cnt.zip -d /local')
+
+    print(path)
     print(group)
     print(encoding)
     print(spec)
@@ -95,7 +101,7 @@ def open_and_format_matrices(group, encoding, spec, extension,
 
     # accession, windows and counts
     tokensAndCounts = pd.read_csv(
-        str('/scratch2/hroetsc/Hotspots/data/' + extension + 'windowTokens_' + group + 'ing' + spec + '.csv'))
+        str(path + extension + 'windowTokens_' + group + 'ing' + spec + '.csv'))
     tokens, counts, labels, dist = format_input(tokensAndCounts,
                                                 pseudocounts,
                                                 relative_dist=relative_dist,
@@ -103,62 +109,42 @@ def open_and_format_matrices(group, encoding, spec, extension,
                                                 log_counts=log_counts)
 
     # get embeddings
-    emb_path = str('/scratch2/hroetsc/Hotspots/data/EMBEDDING_' + encoding + '_' + group + spec + '.dat')
-    acc_path = str('/scratch2/hroetsc/Hotspots/data/ACCESSIONS_' + encoding + '_' + group + spec + '.dat')
-    whole_seq_path = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_' + group + spec + '.dat')
-    whole_seq_ids = str('/scratch2/hroetsc/Hotspots/data/WHOLE-SEQ_ID_' + group + spec + '.dat')
-
-    no_elements = int(windowSize * embeddingDim)
-
-    embMatrix = [None] * tokens.shape[0]
-    accMatrix = [None] * tokens.shape[0]
-    wholeSeq = [None] * tokens.shape[0]
-    wholeSeq_IDs = [None] * tokens.shape[0]
+    emb_path = str(path + 'EMBEDDING_' + encoding + '_' + group + spec + '.dat')
+    acc_path = str(path+'ACCESSIONS_' + encoding + '_' + group + spec + '.dat')
+    whole_seq_path = str(path+'WHOLE-SEQ_' + group + spec + '.dat')
+    whole_seq_ids = str(path + 'WHOLE-SEQ_ID_' + group + spec + '.dat')
 
     # open weights and accessions binary file
     with open(emb_path, 'rb') as emin, open(acc_path, 'rb') as ain, \
             open(whole_seq_path, 'rb') as win, open(whole_seq_ids, 'rb') as win_id:
-        # loop over files to get elements
-        for b in range(tokens.shape[0]):
-            # window embeddings
-            emin.seek(int(b * 4 * no_elements), 0)
-            dt = np.fromfile(emin, dtype='float32', count=no_elements)
-            # make sure to pass 4D-Tensor to model: (batchSize, depth, height, width)
-            dt = dt.reshape((windowSize, embeddingDim))
-            # for 2D convolution --> 4D input:
-            embMatrix[b] = np.expand_dims(dt, axis=0)
 
-            # get current accession (index)
-            ain.seek(int(b * 4), 0)
-            accMatrix[b] = int(np.fromfile(ain, dtype='int32', count=1))
-
-            # get whole sequence embedding
-            win.seek(int(b * 4 * sgt_dim), 0)
-            cnt_ws = np.fromfile(win, dtype='float32', count=sgt_dim)
-            wholeSeq[b] = cnt_ws
-
-            # get ID of sequence
-            win_id.seek(int(b * 4), 0)
-            wholeSeq_IDs[b] = int(np.fromfile(win_id, dtype='int32', count=1))
+        embMatrix = np.fromfile(emin, dtype='float32')
+        accMatrix = np.fromfile(ain, dtype='int32')
+        wholeSeq = np.fromfile(win, dtype='float32')
+        wholeSeq_IDs = np.fromfile(win_id, dtype='int32')
 
         emin.close()
         ain.close()
+        win.close()
+        win_id.close()
 
-    # np arrays
-    accMatrix = np.array(accMatrix, dtype='int32')
-    embMatrix = np.array(embMatrix, dtype='float32')
-    wholeSeq_IDs = np.array(wholeSeq_IDs, dtype='int32')
-    wholeSeq = np.array(wholeSeq, dtype='float32')
+    # reshape
+    no_elements = int(windowSize * embeddingDim)
+    no_windows = int(len(embMatrix) / no_elements)
+
+    embMatrix = embMatrix.reshape(no_windows, windowSize, embeddingDim)
+    wholeSeq = wholeSeq.reshape(no_windows, sgt_dim)
 
     # order all data frames according to occurrence in windowTokens
     # (information kept in ids)
-    embMatrix = embMatrix[np.argsort(accMatrix), :, :, :]
+    embMatrix = embMatrix[np.argsort(accMatrix), :, :]
     wholeSeq = wholeSeq[np.argsort(wholeSeq_IDs), :]
 
-    # should be in the same order as tokens, counts and distance
+    # expand dimensions
+    embMatrix = np.expand_dims(embMatrix, axis=1)
+    wholeSeq = np.expand_dims(wholeSeq, axis=1)
 
-    print(counts[:10])
-
+    # should be in the same order as tokens, counts and distance (checked)
     return tokens, counts, labels, embMatrix, dist, wholeSeq
 
 
@@ -210,13 +196,6 @@ class CosineAnnealing(keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         lr = float(tf.keras.backend.get_value(self.model.optimizer.learning_rate))
-
-        # if (epoch+1) % self.no_cycles == 0:
-        #     self.model.save(
-        #         '/scratch2/hroetsc/Hotspots/results/model/ensemble/ensemble_rank{}_epoch{}.h5'.format(hvd.rank(), self.ensemble))
-        #     self.ensemble += 1
-        #     print('saving model for ensemble prediction')
-
         print("epoch {}: learning rate is {}".format(str(int(epoch)+1), lr))
 
 
